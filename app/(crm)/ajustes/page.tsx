@@ -1,0 +1,25 @@
+import { Topbar } from "@/components/crm/topbar";
+import { Settings } from "lucide-react";
+import { Empty } from "@/components/ui/empty";
+
+export default function AjustesPage() {
+  return (
+    <>
+      <Topbar title="Ajustes" />
+      <main className="flex flex-col flex-1 overflow-hidden mt-14 min-h-0">
+        <div className="flex shrink-0 items-center border-b border-border bg-card px-6 py-2.5">
+          <span className="text-xs text-muted-foreground">
+            Configuración general de la cuenta y el workspace
+          </span>
+        </div>
+        <div className="flex flex-1 items-center justify-center">
+          <Empty
+            icon={<Settings className="h-8 w-8 text-muted-foreground/40" />}
+            title="Ajustes del workspace"
+            description="La configuración de la cuenta, integraciones y pipeline estará disponible aquí."
+          />
+        </div>
+      </main>
+    </>
+  );
+}
