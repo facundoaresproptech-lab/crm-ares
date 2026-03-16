@@ -32,6 +32,7 @@ export interface Lead {
   fechaContacto: string;
   fechaValoracion: string;
   hora: string;
+  planner?: string;
   owner: string;
   createdAt: string;
   assignedUser: string;

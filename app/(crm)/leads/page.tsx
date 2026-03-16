@@ -4,7 +4,15 @@ import { useState, useMemo } from "react";
 import { Topbar } from "@/components/crm/topbar";
 import { NewLeadModal } from "@/components/crm/new-lead-modal";
 import { LeadDetailPanel } from "@/components/crm/lead-detail-panel";
-import { Plus, Circle, ChevronUp, ChevronDown, ChevronsUpDown, Trash2 } from "lucide-react";
+import {
+  Plus,
+  Circle,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
+  Trash2,
+  Search,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -25,25 +33,45 @@ import {
 type SortKey = keyof Lead;
 type SortDir = "asc" | "desc";
 
-function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey | null; sortDir: SortDir }) {
-  if (sortKey !== col) return <ChevronsUpDown className="h-3 w-3 text-muted-foreground/40 shrink-0" />;
-  return sortDir === "asc"
-    ? <ChevronUp className="h-3 w-3 text-primary shrink-0" />
-    : <ChevronDown className="h-3 w-3 text-primary shrink-0" />;
+function SortIcon({
+  col,
+  sortKey,
+  sortDir,
+}: {
+  col: SortKey;
+  sortKey: SortKey | null;
+  sortDir: SortDir;
+}) {
+  if (sortKey !== col) {
+    return (
+      <ChevronsUpDown className="h-3 w-3 text-muted-foreground/40 shrink-0" />
+    );
+  }
+
+  return sortDir === "asc" ? (
+    <ChevronUp className="h-3 w-3 text-primary shrink-0" />
+  ) : (
+    <ChevronDown className="h-3 w-3 text-primary shrink-0" />
+  );
 }
 
 function getValue(lead: Lead, key: SortKey): string | number {
   const v = lead[key];
   if (v === undefined || v === null || v === "") return "";
-  // Dates: normalise to comparable string
-  if (["fechaNoticia", "fechaContacto", "fechaValoracion"].includes(key as string)) {
-    return v as string; // ISO date strings sort lexicographically correctly
+
+  if (
+    ["fechaNoticia", "fechaContacto", "fechaValoracion"].includes(
+      key as string
+    )
+  ) {
+    return v as string;
   }
-  // Valor: strip formatting, parse as number
+
   if (key === "valor") {
     const n = parseFloat(String(v).replace(/[^0-9.]/g, ""));
     return isNaN(n) ? 0 : n;
   }
+
   return String(v).toLowerCase();
 }
 
@@ -71,6 +99,7 @@ export default function LeadsPage() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [searchTerm, setSearchTerm] = useState("");
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {
@@ -81,17 +110,48 @@ export default function LeadsPage() {
     }
   }
 
+  const filteredLeads = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return leads;
+
+    return leads.filter((lead) =>
+      [
+        lead.ownerName,
+        lead.address,
+        lead.distrito,
+        lead.cp,
+        lead.phone,
+        lead.source,
+        lead.owner,
+        lead.planner ?? "",
+        PHASE_LABELS[lead.phase],
+        STATUS_CONFIG[lead.status].label,
+        lead.valor,
+        lead.hora ?? "",
+        lead.fechaNoticia ?? "",
+        lead.fechaContacto ?? "",
+        lead.fechaValoracion ?? "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [leads, searchTerm]);
+
   const sortedLeads = useMemo(() => {
-    if (!sortKey) return leads;
-    return [...leads].sort((a, b) => {
+    if (!sortKey) return filteredLeads;
+
+    return [...filteredLeads].sort((a, b) => {
       const av = getValue(a, sortKey);
       const bv = getValue(b, sortKey);
+
       if (av === "" && bv !== "") return 1;
       if (bv === "" && av !== "") return -1;
+
       const cmp = av < bv ? -1 : av > bv ? 1 : 0;
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [leads, sortKey, sortDir]);
+  }, [filteredLeads, sortKey, sortDir]);
 
   const visibleSelectedCount = useMemo(
     () => sortedLeads.filter((l) => selectedIds.has(l.id)).length,
@@ -143,11 +203,24 @@ export default function LeadsPage() {
       <Topbar title="Leads" onCreateLead={() => setModalOpen(true)} />
 
       <main className="flex flex-col flex-1 overflow-hidden mt-14 min-h-0">
-        {/* Sub-header */}
         <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border bg-card px-6 py-2.5">
-          <span className="text-xs text-muted-foreground">
-            {sortedLeads.length} leads en total
-          </span>
+          <div className="flex items-center gap-4">
+            <span className="text-xs text-muted-foreground">
+              {sortedLeads.length} leads en total
+            </span>
+
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Buscar leads..."
+                className="h-8 w-[260px] rounded-md border border-border bg-background pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+          </div>
+
           <div className="flex items-center gap-2">
             <Button
               size="sm"
@@ -163,6 +236,7 @@ export default function LeadsPage() {
             >
               {selectionMode ? "Cancelar selección" : "Seleccionar"}
             </Button>
+
             <Button
               size="sm"
               className="h-7 gap-1.5 text-xs font-semibold"
@@ -177,9 +251,10 @@ export default function LeadsPage() {
         {selectionMode && selectedIds.size > 0 && (
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-muted/60 px-6 py-2 text-[11px]">
             <span className="text-muted-foreground">
-              {selectedIds.size} lead
-              {selectedIds.size !== 1 ? "s" : ""} seleccionados
+              {selectedIds.size} lead{selectedIds.size !== 1 ? "s" : ""}{" "}
+              seleccionados
             </span>
+
             <Button
               size="sm"
               variant="destructive"
@@ -192,9 +267,8 @@ export default function LeadsPage() {
           </div>
         )}
 
-        {/* Table */}
         <div className="relative flex-1 overflow-auto">
-          <table className="w-full border-collapse text-sm" style={{ minWidth: 1400 }}>
+          <table className="w-full border-collapse text-sm" style={{ minWidth: 1500 }}>
             <thead className="sticky top-0 z-20 bg-card">
               <tr className="border-b border-border bg-card/95 backdrop-blur text-left">
                 {selectionMode && (
@@ -208,22 +282,24 @@ export default function LeadsPage() {
                     />
                   </th>
                 )}
+
                 {(
                   [
-                    { label: "Propietario",    key: "ownerName"       },
-                    { label: "Domicilio",      key: "address"         },
-                    { label: "Distrito",       key: "distrito"        },
-                    { label: "CP",             key: "cp"              },
-                    { label: "Valor",          key: "valor"           },
-                    { label: "Teléfono",       key: "phone"           },
-                    { label: "Origen",         key: "source"          },
-                    { label: "Fase",           key: "phase"           },
-                    { label: "Estado",         key: "status"          },
-                    { label: "F. Noticia",     key: "fechaNoticia"    },
-                    { label: "F. Contacto",    key: "fechaContacto"   },
-                    { label: "F. Valoración",  key: "fechaValoracion" },
-                    { label: "Hora",           key: "hora"            },
-                    { label: "Owner",          key: "owner"           },
+                    { label: "Propietario", key: "ownerName" },
+                    { label: "Domicilio", key: "address" },
+                    { label: "Distrito", key: "distrito" },
+                    { label: "CP", key: "cp" },
+                    { label: "Valor", key: "valor" },
+                    { label: "Teléfono", key: "phone" },
+                    { label: "Origen", key: "source" },
+                    { label: "Fase", key: "phase" },
+                    { label: "Estado", key: "status" },
+                    { label: "F. Noticia", key: "fechaNoticia" },
+                    { label: "F. Contacto", key: "fechaContacto" },
+                    { label: "F. Valoración", key: "fechaValoracion" },
+                    { label: "Hora", key: "hora" },
+                    { label: "Planner", key: "planner" },
+                    { label: "Owner", key: "owner" },
                   ] as { label: string; key: SortKey }[]
                 ).map(({ label, key }) => (
                   <th
@@ -239,6 +315,7 @@ export default function LeadsPage() {
                 ))}
               </tr>
             </thead>
+
             <tbody className="bg-background">
               {sortedLeads.map((lead, i) => (
                 <tr
@@ -250,7 +327,6 @@ export default function LeadsPage() {
                     i % 2 === 0 ? "bg-card" : "bg-background"
                   )}
                 >
-                  {/* Selección */}
                   {selectionMode && (
                     <td className="px-3 py-2.5">
                       <input
@@ -267,46 +343,38 @@ export default function LeadsPage() {
                     </td>
                   )}
 
-                  {/* Propietario */}
                   <td className="px-3 py-2.5">
                     <span className="font-medium text-foreground whitespace-nowrap">
                       {lead.ownerName}
                     </span>
                   </td>
 
-                  {/* Domicilio */}
                   <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap max-w-[180px] truncate">
                     {lead.address}
                   </td>
 
-                  {/* Distrito */}
                   <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                     {lead.distrito}
                   </td>
 
-                  {/* CP */}
                   <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                     {lead.cp}
                   </td>
 
-                  {/* Valor */}
                   <td className="px-3 py-2.5 text-xs font-medium text-foreground whitespace-nowrap">
                     {lead.valor}
                   </td>
 
-                  {/* Teléfono */}
                   <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                     {lead.phone}
                   </td>
 
-                  {/* Origen */}
                   <td className="px-3 py-2.5">
                     <span className="inline-flex items-center rounded-full border border-border bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground whitespace-nowrap">
                       {lead.source}
                     </span>
                   </td>
 
-                  {/* Fase */}
                   <td className="px-3 py-2.5">
                     <span
                       className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap"
@@ -320,7 +388,6 @@ export default function LeadsPage() {
                     </span>
                   </td>
 
-                  {/* Estado */}
                   <td className="px-3 py-2.5">
                     <span className="inline-flex items-center gap-1.5 text-[11px] font-medium whitespace-nowrap">
                       <span
@@ -333,27 +400,26 @@ export default function LeadsPage() {
                     </span>
                   </td>
 
-                  {/* Fecha Noticia */}
                   <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                     {fmt(lead.fechaNoticia)}
                   </td>
 
-                  {/* Fecha Contacto */}
                   <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                     {fmt(lead.fechaContacto)}
                   </td>
 
-                  {/* Fecha Valoración */}
                   <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                     {fmt(lead.fechaValoracion)}
                   </td>
 
-                  {/* Hora */}
                   <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                     {lead.hora || "—"}
                   </td>
 
-                  {/* Owner */}
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
+                    {lead.planner ?? "—"}
+                  </td>
+
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1.5 whitespace-nowrap">
                       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[9px] font-semibold text-primary uppercase">
@@ -363,7 +429,9 @@ export default function LeadsPage() {
                           .map((n) => n[0])
                           .join("")}
                       </span>
-                      <span className="text-xs text-muted-foreground">{lead.owner}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {lead.owner}
+                      </span>
                     </div>
                   </td>
                 </tr>
@@ -378,6 +446,27 @@ export default function LeadsPage() {
         lead={selectedLead}
         onClose={() => setSelectedLead(null)}
       />
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar leads seleccionados</DialogTitle>
+            <DialogDescription>
+              Esta acción eliminará {selectedIds.size} lead
+              {selectedIds.size !== 1 ? "s" : ""} y no se puede deshacer.
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={handleConfirmDelete}>
+              Eliminar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
