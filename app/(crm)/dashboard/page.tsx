@@ -18,7 +18,7 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
-import { type Lead, PHASE_LABELS, MOCK_LEADS } from "@/lib/crm-data";
+import { PHASE_LABELS } from "@/lib/crm-data";
 
 type PeriodOption = "last7" | "currentMonth" | "custom";
 
@@ -28,7 +28,13 @@ type DateRange = {
 };
 
 type FunnelItem = {
-  phase: "noticia" | "concertada" | "valorada" | "cualificada" | "encargo";
+  phase:
+    | "sin_fase"
+    | "noticia"
+    | "concertada"
+    | "valorada"
+    | "cualificada"
+    | "encargo";
   label: string;
   value: number;
 };
@@ -38,7 +44,43 @@ type SourceItem = {
   value: number;
 };
 
+type CrmLeadRow = {
+  id: number;
+  created_at: string | null;
+  fecha: string | null;
+  propietario: string | null;
+  telefono: string | null;
+  domicilio: string | null;
+  tasacion: string | null;
+  estado: string | null;
+  memo: string | null;
+  en_venta: string | null;
+  fase_id: number | null;
+  fase_name: string | null;
+  source_id: number | null;
+  source_name: string | null;
+  comercial_user_id: number | null;
+  comercial_name: string | null;
+  contact_user_id: number | null;
+  contact_name: string | null;
+  postal_id: number | null;
+  cp: number | null;
+  provincia: string | null;
+  distrito: string | null;
+  team_id: number | null;
+  dominio_desc: string | null;
+};
+
+type DashboardLead = {
+  id: string;
+  createdAt: string | null;
+  phase: FunnelItem["phase"];
+  status: "seguimiento" | "caliente" | "desestimada" | "identificar";
+  source: string;
+};
+
 const PHASE_ORDER: FunnelItem["phase"][] = [
+  "sin_fase",
   "noticia",
   "concertada",
   "valorada",
@@ -173,7 +215,8 @@ export default function DashboardPage() {
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [supabaseTest, setSupabaseTest] = useState("cargando...");
-  const [realLeadsPreview, setRealLeadsPreview] = useState<Record<string, any>[]>([]);
+  const [crmLeads, setCrmLeads] = useState<CrmLeadRow[]>([]);
+  const [crmLeadsLoading, setCrmLeadsLoading] = useState(true);
 
   useEffect(() => {
     async function testSupabase() {
@@ -181,35 +224,38 @@ export default function DashboardPage() {
         .from("crm_leads_view")
         .select("*")
         .limit(3);
-  
+
       if (error) {
         console.error("Supabase error:", error);
         setSupabaseTest("error");
         return;
       }
-  
+
       console.log("Supabase crm_leads_view test:", data);
       setSupabaseTest(`ok: ${data?.length ?? 0} filas`);
     }
-  
-    async function fetchRealLeadsPreview() {
+
+    async function fetchCrmLeads() {
+      setCrmLeadsLoading(true);
+
       const { data, error } = await supabase
         .from("crm_leads_view")
         .select("*")
-        .order("created_at", { ascending: false })
-        .limit(5);
-  
+        .order("created_at", { ascending: false });
+
       if (error) {
-        console.error("Supabase preview error:", error);
+        console.error("Supabase crm leads error:", error);
+        setCrmLeadsLoading(false);
         return;
       }
-  
-      console.log("Supabase real leads preview:", data);
-      setRealLeadsPreview(data ?? []);
+
+      console.log("Supabase crm leads:", data);
+      setCrmLeads(data ?? []);
+      setCrmLeadsLoading(false);
     }
-  
+
     testSupabase();
-    fetchRealLeadsPreview();
+    fetchCrmLeads();
   }, []);
 
   const currentRange = useMemo(() => {
@@ -221,23 +267,62 @@ export default function DashboardPage() {
     return createCustomRange(customFrom, customTo, defaultRange);
   }, [period, customFrom, customTo]);
 
-  const currentLeads = useMemo(() => {
-    const current: Lead[] = [];
+  const currentLeads = useMemo<DashboardLead[]>(() => {
+    const current: DashboardLead[] = [];
 
-    for (const lead of MOCK_LEADS) {
-      const created = new Date(lead.createdAt);
-      if (!isNaN(created.getTime()) && isWithinRange(created, currentRange)) {
-        current.push(lead);
-      }
+    for (const lead of crmLeads) {
+      const created = lead.created_at ? new Date(lead.created_at) : null;
+
+      if (!created || isNaN(created.getTime())) continue;
+      if (!isWithinRange(created, currentRange)) continue;
+
+      const normalizedPhase = (() => {
+        const raw = (lead.fase_name || "").toLowerCase().trim();
+
+        if (raw === "sin fase") return "sin_fase";
+        if (raw === "noticia") return "noticia";
+        if (raw === "concertada") return "concertada";
+        if (raw === "valorada") return "valorada";
+        if (raw === "cualificada") return "cualificada";
+        if (raw === "encargo") return "encargo";
+        return "sin_fase";
+      })();
+
+      const normalizedStatus = (() => {
+        const raw = (lead.estado || "").toLowerCase().trim();
+
+        if (raw === "seguimiento") return "seguimiento";
+        if (raw === "caliente") return "caliente";
+        if (raw === "desestimada") return "desestimada";
+        if (raw === "identificar" || raw === "identificada") return "identificar";
+        return "seguimiento";
+      })();
+
+      current.push({
+        id: String(lead.id),
+        createdAt: lead.created_at,
+        phase: normalizedPhase,
+        status: normalizedStatus,
+        source: lead.source_name || "Sin origen",
+      });
     }
 
     return current;
-  }, [currentRange]);
+  }, [crmLeads, currentRange]);
 
   const funnelData = useMemo<FunnelItem[]>(() => {
+    const phaseLabels: Record<FunnelItem["phase"], string> = {
+      sin_fase: "Sin fase",
+      noticia: PHASE_LABELS.noticia,
+      concertada: PHASE_LABELS.concertada,
+      valorada: PHASE_LABELS.valorada,
+      cualificada: PHASE_LABELS.cualificada,
+      encargo: PHASE_LABELS.encargo,
+    };
+
     return PHASE_ORDER.map((phase) => ({
       phase,
-      label: PHASE_LABELS[phase],
+      label: phaseLabels[phase],
       value: currentLeads.filter((l) => l.phase === phase).length,
     }));
   }, [currentLeads]);
@@ -251,8 +336,7 @@ export default function DashboardPage() {
     const noticia = funnelData.find((x) => x.phase === "noticia")?.value ?? 0;
     const concertada = funnelData.find((x) => x.phase === "concertada")?.value ?? 0;
     const valorada = funnelData.find((x) => x.phase === "valorada")?.value ?? 0;
-    const cualificada =
-      funnelData.find((x) => x.phase === "cualificada")?.value ?? 0;
+    const cualificada = funnelData.find((x) => x.phase === "cualificada")?.value ?? 0;
     const encargo = funnelData.find((x) => x.phase === "encargo")?.value ?? 0;
 
     return [
@@ -293,7 +377,7 @@ export default function DashboardPage() {
       const dayEnd = endOfDay(date).getTime();
 
       const dayLeads = currentLeads.filter((lead) => {
-        const created = new Date(lead.createdAt).getTime();
+        const created = lead.createdAt ? new Date(lead.createdAt).getTime() : NaN;
         return created >= dayStart && created <= dayEnd;
       });
 
@@ -332,7 +416,7 @@ export default function DashboardPage() {
       const dayEnd = endOfDay(date).getTime();
 
       const dayLeads = currentLeads.filter((lead) => {
-        const created = new Date(lead.createdAt).getTime();
+        const created = lead.createdAt ? new Date(lead.createdAt).getTime() : NaN;
         return created >= dayStart && created <= dayEnd;
       });
 
@@ -436,39 +520,51 @@ export default function DashboardPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 pb-8">
-                <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.4fr_0.9fr]">
+          {crmLeadsLoading && (
+            <div className="mb-4 rounded-xl bg-white/95 px-4 py-3 text-sm text-slate-700 shadow-xl">
+              Cargando leads reales desde Supabase...
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.4fr_0.9fr]">
             <Card className="border-white/10 bg-white/95 shadow-xl">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Embudo de fases</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <FunnelBar
-                  label="Noticia"
+                  label="Sin fase"
                   value={funnelData[0]?.value ?? 0}
+                  maxValue={maxFunnelValue}
+                  colorClass="bg-slate-500"
+                />
+                <FunnelBar
+                  label="Noticia"
+                  value={funnelData[1]?.value ?? 0}
                   maxValue={maxFunnelValue}
                   colorClass="bg-[#cdb8ef]"
                 />
                 <FunnelBar
                   label="Concertada"
-                  value={funnelData[1]?.value ?? 0}
+                  value={funnelData[2]?.value ?? 0}
                   maxValue={maxFunnelValue}
                   colorClass="bg-[#facc15]"
                 />
                 <FunnelBar
                   label="Valorada"
-                  value={funnelData[2]?.value ?? 0}
+                  value={funnelData[3]?.value ?? 0}
                   maxValue={maxFunnelValue}
                   colorClass="bg-[#2563eb]"
                 />
                 <FunnelBar
                   label="Cualificada"
-                  value={funnelData[3]?.value ?? 0}
+                  value={funnelData[4]?.value ?? 0}
                   maxValue={maxFunnelValue}
                   colorClass="bg-[#a21caf]"
                 />
                 <FunnelBar
                   label="Encargo"
-                  value={funnelData[4]?.value ?? 0}
+                  value={funnelData[5]?.value ?? 0}
                   maxValue={maxFunnelValue}
                   colorClass="bg-[#dc2626]"
                 />
