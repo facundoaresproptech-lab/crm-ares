@@ -13,10 +13,29 @@ import {
   ChevronsUpDown,
   Trash2,
   Search,
+  LayoutGrid,
+  Table2,
+  Phone,
+  MapPin,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
+import {
+  DndContext,
+  type DragEndEvent,
+  PointerSensor,
+  closestCorners,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   type Lead,
   PHASE_LABELS,
@@ -33,6 +52,7 @@ import {
 
 type SortKey = keyof Lead;
 type SortDir = "asc" | "desc";
+type LeadsViewMode = "table" | "kanban";
 
 type CrmLeadRow = {
   id: number;
@@ -61,6 +81,15 @@ type CrmLeadRow = {
   dominio_desc: string | null;
 };
 
+const KANBAN_PHASES: Lead["phase"][] = [
+  "noticia",
+  "concertada",
+  "valorada",
+  "cualificada",
+  "encargo",
+  "vender",
+];
+
 function SortIcon({
   col,
   sortKey,
@@ -72,14 +101,14 @@ function SortIcon({
 }) {
   if (sortKey !== col) {
     return (
-      <ChevronsUpDown className="h-3 w-3 text-muted-foreground/40 shrink-0" />
+      <ChevronsUpDown className="h-3 w-3 shrink-0 text-muted-foreground/40" />
     );
   }
 
   return sortDir === "asc" ? (
-    <ChevronUp className="h-3 w-3 text-primary shrink-0" />
+    <ChevronUp className="h-3 w-3 shrink-0 text-primary" />
   ) : (
-    <ChevronDown className="h-3 w-3 text-primary shrink-0" />
+    <ChevronDown className="h-3 w-3 shrink-0 text-primary" />
   );
 }
 
@@ -156,12 +185,19 @@ function mapCrmLeadToLead(row: CrmLeadRow): Lead {
     row.contact_name?.trim() ||
     "Sin asignar";
 
+  const domicilio = row.domicilio?.trim() || "—";
+  const distrito = row.distrito?.trim() || "—";
+  const provincia = row.provincia?.trim() || "—";
+  const cp = row.cp ? String(row.cp) : "—";
+
   return {
     id: String(row.id),
     ownerName: row.propietario?.trim() || "—",
-    address: row.domicilio?.trim() || "—",
-    distrito: row.distrito?.trim() || row.provincia?.trim() || "—",
-    cp: row.cp ? String(row.cp) : "—",
+    address: domicilio,
+    distrito,
+    municipio: distrito,
+    provincia,
+    cp,
     valor: normalizeValor(row.tasacion),
     phone: row.telefono?.trim() || "—",
     source: row.source_name?.trim() || "Sin origen",
@@ -173,7 +209,181 @@ function mapCrmLeadToLead(row: CrmLeadRow): Lead {
     hora: "",
     planner: row.dominio_desc?.trim() || "—",
     owner: ownerLabel,
+    createdAt: row.created_at || "",
+    assignedUser: ownerLabel,
+    propertyAddress:
+      domicilio !== "—"
+        ? `${domicilio}, ${distrito !== "—" ? distrito : provincia}`
+        : "—",
+    notes: row.memo?.trim() || "",
+    observaciones: [],
   };
+}
+
+function KanbanLeadCard({
+  lead,
+  onClick,
+}: {
+  lead: Lead;
+  onClick: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: lead.id,
+    data: {
+      type: "lead",
+      leadId: lead.id,
+      phase: lead.phase,
+    },
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      style={style}
+      {...attributes}
+      {...listeners}
+      onClick={onClick}
+      className={cn(
+        "w-full rounded-xl border border-border bg-card p-3 text-left shadow-sm transition hover:border-primary/30 hover:bg-accent/40",
+        isDragging && "opacity-60"
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-foreground">
+            {lead.ownerName}
+          </div>
+          <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+            <MapPin className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{lead.address}</span>
+          </div>
+        </div>
+
+        <span
+          className="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-medium"
+          style={{
+            backgroundColor: PHASE_COLORS[lead.phase] + "1a",
+            color: PHASE_COLORS[lead.phase],
+          }}
+        >
+          {PHASE_LABELS[lead.phase]}
+        </span>
+      </div>
+
+      <div className="mt-3 grid gap-2 text-[11px] text-muted-foreground">
+        <div className="flex items-center justify-between gap-3">
+          <span className="truncate">Origen</span>
+          <span className="truncate font-medium text-foreground">{lead.source}</span>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <span>Estado</span>
+          <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full",
+                STATUS_CONFIG[lead.status].dot
+              )}
+            />
+            {STATUS_CONFIG[lead.status].label}
+          </span>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <span>Valor</span>
+          <span className="font-medium text-foreground">{lead.valor}</span>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <span>Fecha</span>
+          <span className="font-medium text-foreground">{fmt(lead.fechaNoticia)}</span>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3 text-[11px]">
+        <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+          <Phone className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{lead.phone}</span>
+        </div>
+        <span className="truncate text-muted-foreground">{lead.owner}</span>
+      </div>
+    </button>
+  );
+}
+
+function KanbanColumn({
+  phase,
+  leads,
+  onOpenLead,
+}: {
+  phase: Lead["phase"];
+  leads: Lead[];
+  onOpenLead: (lead: Lead) => void;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: phase,
+  });
+
+  return (
+    <div className="flex min-h-[500px] w-[320px] shrink-0 flex-col rounded-2xl border border-border bg-muted/30">
+      <div className="sticky top-0 z-10 rounded-t-2xl border-b border-border bg-background/95 px-4 py-3 backdrop-blur">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              className="h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{ backgroundColor: PHASE_COLORS[phase] }}
+            />
+            <span className="truncate text-sm font-semibold text-foreground">
+              {PHASE_LABELS[phase]}
+            </span>
+          </div>
+          <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-muted px-2 text-xs font-semibold text-foreground">
+            {leads.length}
+          </span>
+        </div>
+      </div>
+
+      <SortableContext
+        items={leads.map((lead) => lead.id)}
+        strategy={verticalListSortingStrategy}
+      >
+        <div
+          ref={setNodeRef}
+          className={cn(
+            "flex-1 space-y-3 overflow-y-auto p-3 transition-colors",
+            isOver && "rounded-b-2xl bg-primary/5"
+          )}
+        >
+          {leads.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border bg-background px-3 py-6 text-center text-xs text-muted-foreground">
+              Sin leads en esta fase
+            </div>
+          ) : (
+            leads.map((lead) => (
+              <KanbanLeadCard
+                key={lead.id}
+                lead={lead}
+                onClick={() => onOpenLead(lead)}
+              />
+            ))
+          )}
+        </div>
+      </SortableContext>
+    </div>
+  );
 }
 
 export default function LeadsPage() {
@@ -188,28 +398,114 @@ export default function LeadsPage() {
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [searchTerm, setSearchTerm] = useState("");
+  const [viewMode, setViewMode] = useState<LeadsViewMode>("table");
 
-  useEffect(() => {
-    async function fetchLeads() {
-      setLoadingLeads(true);
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    })
+  );
 
-      const { data, error } = await supabase
-        .from("crm_leads_view")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        console.error("Supabase leads error:", error);
-        setLoadingLeads(false);
-        return;
+  async function handleKanbanDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+  
+    if (!over) return;
+  
+    const activeLeadId = String(active.id);
+    const overId = String(over.id);
+  
+    const activeLead = leads.find((lead) => lead.id === activeLeadId);
+    if (!activeLead) return;
+  
+    let targetPhase: Lead["phase"] | null = null;
+  
+    if (
+      overId === "noticia" ||
+      overId === "concertada" ||
+      overId === "valorada" ||
+      overId === "cualificada" ||
+      overId === "encargo" ||
+      overId === "vender"
+    ) {
+      targetPhase = overId;
+    } else {
+      const targetLead = leads.find((lead) => lead.id === overId);
+      if (targetLead) {
+        targetPhase = targetLead.phase;
       }
+    }
+  
+    if (!targetPhase) return;
+    if (activeLead.phase === targetPhase) return;
+  
+    setLeads((prev) =>
+      prev.map((lead) =>
+        lead.id === activeLeadId ? { ...lead, phase: targetPhase! } : lead
+      )
+    );
+  }
 
-      const mapped = (data ?? []).map((row) => mapCrmLeadToLead(row as CrmLeadRow));
-      setLeads(mapped);
+  async function loadLeadsFromSupabase() {
+    setLoadingLeads(true);
+
+    const { data, error } = await supabase
+      .from("crm_leads_view")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Supabase leads error:", error);
       setLoadingLeads(false);
+      return;
     }
 
-    fetchLeads();
+    const mapped = (data ?? []).map((row) => mapCrmLeadToLead(row as CrmLeadRow));
+    setLeads(mapped);
+    setLoadingLeads(false);
+  }
+
+  async function handleImportCsv(importedLeads: Lead[]) {
+    if (importedLeads.length === 0) return;
+
+    const rowsToInsert = importedLeads.map((lead) => ({
+      propietario: lead.ownerName || null,
+      domicilio: lead.address || null,
+      telefono: lead.phone || null,
+      tasacion: lead.valor || null,
+      estado: lead.status || null,
+      fecha: lead.fechaNoticia || null,
+      source_desc: lead.source || null,
+      comercial_user_desc: lead.owner || null,
+      dominio_desc: lead.planner || null,
+      postal_id: null,
+      fase_id: null,
+      created_at: new Date().toISOString(),
+      memo: lead.notes || null,
+      en_venta: null,
+      contact_user_desc: null,
+      source_id: null,
+      comercial_user_id: null,
+      contact_user_id: null,
+      team_id: null,
+      deleted_at: null,
+    }));
+
+    const { error } = await supabase
+      .from("opportunities")
+      .insert(rowsToInsert);
+
+    if (error) {
+      console.error("Error importing CSV to Supabase:", error);
+      return;
+    }
+
+    await loadLeadsFromSupabase();
+  }
+
+  useEffect(() => {
+    loadLeadsFromSupabase();
   }, []);
 
   function handleSort(key: SortKey) {
@@ -263,6 +559,13 @@ export default function LeadsPage() {
     });
   }, [filteredLeads, sortKey, sortDir]);
 
+  const kanbanGroups = useMemo(() => {
+    return KANBAN_PHASES.map((phase) => ({
+      phase,
+      leads: filteredLeads.filter((lead) => lead.phase === phase),
+    }));
+  }, [filteredLeads]);
+
   const visibleSelectedCount = useMemo(
     () => sortedLeads.filter((l) => selectedIds.has(l.id)).length,
     [sortedLeads, selectedIds]
@@ -299,11 +602,25 @@ export default function LeadsPage() {
     });
   }
 
-  function handleConfirmDelete() {
+  async function handleConfirmDelete() {
+    const idsToDelete = Array.from(selectedIds).map((id) => Number(id));
+
+    const { error } = await supabase
+      .from("opportunities")
+      .update({ deleted_at: new Date().toISOString() })
+      .in("id", idsToDelete);
+
+    if (error) {
+      console.error("Error soft deleting leads:", error);
+      return;
+    }
+
     setLeads((prev) => prev.filter((lead) => !selectedIds.has(lead.id)));
+
     if (selectedLead && selectedIds.has(selectedLead.id)) {
       setSelectedLead(null);
     }
+
     setSelectedIds(new Set());
     setConfirmOpen(false);
   }
@@ -312,11 +629,11 @@ export default function LeadsPage() {
     <>
       <Topbar title="Leads" onCreateLead={() => setModalOpen(true)} />
 
-      <main className="flex flex-col flex-1 overflow-hidden mt-14 min-h-0">
+      <main className="mt-14 flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border bg-card px-6 py-2.5">
           <div className="flex items-center gap-4">
             <span className="text-xs text-muted-foreground">
-              {sortedLeads.length} leads en total
+              {viewMode === "table" ? sortedLeads.length : filteredLeads.length} leads en total
             </span>
 
             <div className="relative">
@@ -332,6 +649,40 @@ export default function LeadsPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            <div className="inline-flex items-center rounded-lg border border-border bg-background p-1">
+              <button
+                type="button"
+                onClick={() => setViewMode("table")}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors",
+                  viewMode === "table"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Table2 className="h-3.5 w-3.5" />
+                Tabla
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode("kanban");
+                  setSelectionMode(false);
+                  setSelectedIds(new Set());
+                }}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors",
+                  viewMode === "kanban"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <LayoutGrid className="h-3.5 w-3.5" />
+                Kanban
+              </button>
+            </div>
+
             <Button
               size="sm"
               variant="outline"
@@ -340,20 +691,23 @@ export default function LeadsPage() {
             >
               Importar CSV
             </Button>
-            <Button
-              size="sm"
-              className="h-7 gap-1.5 text-xs font-semibold"
-              onClick={() => {
-                if (selectionMode) {
-                  setSelectionMode(false);
-                  setSelectedIds(new Set());
-                } else {
-                  setSelectionMode(true);
-                }
-              }}
-            >
-              {selectionMode ? "Cancelar selección" : "Seleccionar"}
-            </Button>
+
+            {viewMode === "table" && (
+              <Button
+                size="sm"
+                className="h-7 gap-1.5 text-xs font-semibold"
+                onClick={() => {
+                  if (selectionMode) {
+                    setSelectionMode(false);
+                    setSelectedIds(new Set());
+                  } else {
+                    setSelectionMode(true);
+                  }
+                }}
+              >
+                {selectionMode ? "Cancelar selección" : "Seleccionar"}
+              </Button>
+            )}
 
             <Button
               size="sm"
@@ -366,11 +720,10 @@ export default function LeadsPage() {
           </div>
         </div>
 
-        {selectionMode && selectedIds.size > 0 && (
+        {viewMode === "table" && selectionMode && selectedIds.size > 0 && (
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-muted/60 px-6 py-2 text-[11px]">
             <span className="text-muted-foreground">
-              {selectedIds.size} lead{selectedIds.size !== 1 ? "s" : ""}{" "}
-              seleccionados
+              {selectedIds.size} lead{selectedIds.size !== 1 ? "s" : ""} seleccionados
             </span>
 
             <Button
@@ -391,188 +744,209 @@ export default function LeadsPage() {
           </div>
         )}
 
-        <div className="relative flex-1 overflow-auto">
-          <table className="w-full border-collapse text-sm" style={{ minWidth: 1500 }}>
-            <thead className="sticky top-0 z-20 bg-card">
-              <tr className="border-b border-border bg-card/95 backdrop-blur text-left">
-                {selectionMode && (
-                  <th className="w-8 px-3 py-2.5">
-                    <input
-                      type="checkbox"
-                      checked={allVisibleSelected}
-                      onChange={(e) => toggleSelectAllVisible(e.target.checked)}
-                      className="h-3.5 w-3.5 rounded border-border text-primary"
-                      aria-label="Seleccionar todos"
-                    />
-                  </th>
-                )}
-
-                {(
-                  [
-                    { label: "Propietario", key: "ownerName" },
-                    { label: "Domicilio", key: "address" },
-                    { label: "Distrito", key: "distrito" },
-                    { label: "CP", key: "cp" },
-                    { label: "Valor", key: "valor" },
-                    { label: "Teléfono", key: "phone" },
-                    { label: "Origen", key: "source" },
-                    { label: "Fase", key: "phase" },
-                    { label: "Estado", key: "status" },
-                    { label: "F. Noticia", key: "fechaNoticia" },
-                    { label: "F. Contacto", key: "fechaContacto" },
-                    { label: "F. Valoración", key: "fechaValoracion" },
-                    { label: "Hora", key: "hora" },
-                    { label: "Planner", key: "planner" },
-                    { label: "Owner", key: "owner" },
-                  ] as { label: string; key: SortKey }[]
-                ).map(({ label, key }) => (
-                  <th
-                    key={key}
-                    onClick={() => handleSort(key)}
-                    className="px-3 py-2.5 whitespace-nowrap cursor-pointer select-none group"
-                  >
-                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground group-hover:text-foreground transition-colors">
-                      {label}
-                      <SortIcon col={key} sortKey={sortKey} sortDir={sortDir} />
-                    </span>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-
-            <tbody className="bg-background">
-              {sortedLeads.map((lead, i) => (
-                <tr
-                  key={lead.id}
-                  onClick={() => setSelectedLead(lead)}
-                  className={cn(
-                    "cursor-pointer border-b border-border transition-colors hover:bg-accent/60",
-                    selectedLead?.id === lead.id && "bg-accent",
-                    i % 2 === 0 ? "bg-card" : "bg-background"
-                  )}
-                >
+        {viewMode === "table" ? (
+          <div className="relative flex-1 overflow-auto">
+            <table className="w-full border-collapse text-sm" style={{ minWidth: 1500 }}>
+              <thead className="sticky top-0 z-20 bg-card">
+                <tr className="border-b border-border bg-card/95 text-left backdrop-blur">
                   {selectionMode && (
-                    <td className="px-3 py-2.5">
+                    <th className="w-8 px-3 py-2.5">
                       <input
                         type="checkbox"
-                        checked={selectedIds.has(lead.id)}
-                        onChange={(e) => {
-                          e.stopPropagation();
-                          toggleRowSelection(lead.id);
-                        }}
-                        onClick={(e) => e.stopPropagation()}
+                        checked={allVisibleSelected}
+                        onChange={(e) => toggleSelectAllVisible(e.target.checked)}
                         className="h-3.5 w-3.5 rounded border-border text-primary"
-                        aria-label="Seleccionar lead"
+                        aria-label="Seleccionar todos"
                       />
-                    </td>
+                    </th>
                   )}
 
-                  <td className="px-3 py-2.5">
-                    <span className="font-medium text-foreground whitespace-nowrap">
-                      {lead.ownerName}
-                    </span>
-                  </td>
-
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap max-w-[180px] truncate">
-                    {lead.address}
-                  </td>
-
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                    {lead.distrito}
-                  </td>
-
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                    {lead.cp}
-                  </td>
-
-                  <td className="px-3 py-2.5 text-xs font-medium text-foreground whitespace-nowrap">
-                    {lead.valor}
-                  </td>
-
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                    {lead.phone}
-                  </td>
-
-                  <td className="px-3 py-2.5">
-                    <span className="inline-flex items-center rounded-full border border-border bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground whitespace-nowrap">
-                      {lead.source}
-                    </span>
-                  </td>
-
-                  <td className="px-3 py-2.5">
-                    <span
-                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap"
-                      style={{
-                        backgroundColor: PHASE_COLORS[lead.phase] + "1a",
-                        color: PHASE_COLORS[lead.phase],
-                      }}
+                  {(
+                    [
+                      { label: "Propietario", key: "ownerName" },
+                      { label: "Domicilio", key: "address" },
+                      { label: "Distrito", key: "distrito" },
+                      { label: "CP", key: "cp" },
+                      { label: "Valor", key: "valor" },
+                      { label: "Teléfono", key: "phone" },
+                      { label: "Origen", key: "source" },
+                      { label: "Fase", key: "phase" },
+                      { label: "Estado", key: "status" },
+                      { label: "F. Noticia", key: "fechaNoticia" },
+                      { label: "F. Contacto", key: "fechaContacto" },
+                      { label: "F. Valoración", key: "fechaValoracion" },
+                      { label: "Hora", key: "hora" },
+                      { label: "Planner", key: "planner" },
+                      { label: "Owner", key: "owner" },
+                    ] as { label: string; key: SortKey }[]
+                  ).map(({ label, key }) => (
+                    <th
+                      key={key}
+                      onClick={() => handleSort(key)}
+                      className="group cursor-pointer select-none whitespace-nowrap px-3 py-2.5"
                     >
-                      <Circle className="h-1.5 w-1.5 fill-current" />
-                      {PHASE_LABELS[lead.phase]}
-                    </span>
-                  </td>
-
-                  <td className="px-3 py-2.5">
-                    <span className="inline-flex items-center gap-1.5 text-[11px] font-medium whitespace-nowrap">
-                      <span
-                        className={cn(
-                          "h-1.5 w-1.5 rounded-full shrink-0",
-                          STATUS_CONFIG[lead.status].dot
-                        )}
-                      />
-                      {STATUS_CONFIG[lead.status].label}
-                    </span>
-                  </td>
-
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                    {fmt(lead.fechaNoticia)}
-                  </td>
-
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                    {fmt(lead.fechaContacto)}
-                  </td>
-
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                    {fmt(lead.fechaValoracion)}
-                  </td>
-
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                    {lead.hora || "—"}
-                  </td>
-
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                    {lead.planner ?? "—"}
-                  </td>
-
-                  <td className="px-3 py-2.5">
-                    <div className="flex items-center gap-1.5 whitespace-nowrap">
-                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[9px] font-semibold text-primary uppercase">
-                        {lead.owner
-                          .split(" ")
-                          .slice(0, 2)
-                          .map((n) => n[0])
-                          .join("")}
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors group-hover:text-foreground">
+                        {label}
+                        <SortIcon col={key} sortKey={sortKey} sortDir={sortDir} />
                       </span>
-                      <span className="text-xs text-muted-foreground">
-                        {lead.owner}
-                      </span>
-                    </div>
-                  </td>
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+
+              <tbody className="bg-background">
+                {sortedLeads.map((lead, i) => (
+                  <tr
+                    key={lead.id}
+                    onClick={() => setSelectedLead(lead)}
+                    className={cn(
+                      "cursor-pointer border-b border-border transition-colors hover:bg-accent/60",
+                      selectedLead?.id === lead.id && "bg-accent",
+                      i % 2 === 0 ? "bg-card" : "bg-background"
+                    )}
+                  >
+                    {selectionMode && (
+                      <td className="px-3 py-2.5">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(lead.id)}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            toggleRowSelection(lead.id);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="h-3.5 w-3.5 rounded border-border text-primary"
+                          aria-label="Seleccionar lead"
+                        />
+                      </td>
+                    )}
+
+                    <td className="px-3 py-2.5">
+                      <span className="whitespace-nowrap font-medium text-foreground">
+                        {lead.ownerName}
+                      </span>
+                    </td>
+
+                    <td className="max-w-[180px] truncate whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">
+                      {lead.address}
+                    </td>
+
+                    <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">
+                      {lead.distrito}
+                    </td>
+
+                    <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">
+                      {lead.cp}
+                    </td>
+
+                    <td className="whitespace-nowrap px-3 py-2.5 text-xs font-medium text-foreground">
+                      {lead.valor}
+                    </td>
+
+                    <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">
+                      {lead.phone}
+                    </td>
+
+                    <td className="px-3 py-2.5">
+                      <span className="inline-flex items-center rounded-full border border-border bg-muted/60 px-2 py-0.5 text-[11px] whitespace-nowrap text-muted-foreground">
+                        {lead.source}
+                      </span>
+                    </td>
+
+                    <td className="px-3 py-2.5">
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap"
+                        style={{
+                          backgroundColor: PHASE_COLORS[lead.phase] + "1a",
+                          color: PHASE_COLORS[lead.phase],
+                        }}
+                      >
+                        <Circle className="h-1.5 w-1.5 fill-current" />
+                        {PHASE_LABELS[lead.phase]}
+                      </span>
+                    </td>
+
+                    <td className="px-3 py-2.5">
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium whitespace-nowrap">
+                        <span
+                          className={cn(
+                            "h-1.5 w-1.5 rounded-full shrink-0",
+                            STATUS_CONFIG[lead.status].dot
+                          )}
+                        />
+                        {STATUS_CONFIG[lead.status].label}
+                      </span>
+                    </td>
+
+                    <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">
+                      {fmt(lead.fechaNoticia)}
+                    </td>
+
+                    <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">
+                      {fmt(lead.fechaContacto)}
+                    </td>
+
+                    <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">
+                      {fmt(lead.fechaValoracion)}
+                    </td>
+
+                    <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">
+                      {lead.hora || "—"}
+                    </td>
+
+                    <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">
+                      {lead.planner ?? "—"}
+                    </td>
+
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1.5 whitespace-nowrap">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[9px] font-semibold uppercase text-primary">
+                          {lead.owner
+                            .split(" ")
+                            .slice(0, 2)
+                            .map((n) => n[0])
+                            .join("")}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {lead.owner}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <DndContext
+  sensors={sensors}
+  collisionDetection={closestCorners}
+  onDragEnd={handleKanbanDragEnd}
+>
+            <div className="flex-1 overflow-x-auto overflow-y-hidden px-6 py-5">
+              <div className="flex h-full gap-4">
+                {kanbanGroups.map(({ phase, leads }) => (
+                  <KanbanColumn
+                    key={phase}
+                    phase={phase}
+                    leads={leads}
+                    onOpenLead={setSelectedLead}
+                  />
+                ))}
+              </div>
+            </div>
+          </DndContext>
+        )}
       </main>
 
       <NewLeadModal open={modalOpen} onOpenChange={setModalOpen} />
+
       <ImportLeadsCsvModal
         open={importOpen}
         onOpenChange={setImportOpen}
-        onImport={(newLeads) => {
-          setLeads((prev) => [...newLeads, ...prev]);
-        }}
+        onImport={handleImportCsv}
       />
+
       <LeadDetailPanel
         lead={selectedLead}
         onClose={() => setSelectedLead(null)}
