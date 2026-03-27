@@ -1,0 +1,316 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { Topbar } from "@/components/crm/topbar";
+import { supabase } from "@/lib/supabase";
+import { Search } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { Lead } from "@/lib/crm-data";
+
+type CrmLeadRow = {
+    id: number;
+    created_at: string | null;
+    fecha: string | null;
+    propietario: string | null;
+    telefono: string | null;
+    domicilio: string | null;
+    tasacion: string | null;
+    estado: string | null;
+    memo: string | null;
+    fase_name: string | null;
+    source_name: string | null;
+    comercial_name: string | null;
+    contact_name: string | null;
+    cp: number | null;
+    provincia: string | null;
+    distrito: string | null;
+    dominio_desc: string | null;
+  };
+
+function fmt(d: string) {
+  if (!d) return "—";
+  const parsed = new Date(d);
+  if (isNaN(parsed.getTime())) return d;
+  return parsed.toLocaleDateString("es-ES", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  });
+}
+
+function normalizePhase(raw: string | null | undefined): Lead["phase"] {
+  const value = (raw || "").toLowerCase().trim();
+
+  if (value.includes("noticia")) return "noticia";
+  if (value.includes("concertada")) return "concertada";
+  if (value.includes("valorada")) return "valorada";
+  if (value.includes("cualificada")) return "cualificada";
+  if (value.includes("encargo")) return "encargo";
+  if (value.includes("vendida") || value.includes("vender")) return "vender";
+
+  return "noticia";
+}
+
+function normalizeStatus(raw: string | null | undefined): Lead["status"] {
+  const value = (raw || "").toLowerCase().trim();
+
+  if (value === "identificar" || value === "identificada") return "identificar";
+  if (value === "seguimiento") return "seguimiento";
+  if (value === "caliente") return "caliente";
+  if (value === "desestimada") return "desestimada";
+
+  return "seguimiento";
+}
+
+function mapCrmLeadToLead(row: CrmLeadRow): Lead {
+  const ownerLabel =
+    row.comercial_name?.trim() ||
+    row.contact_name?.trim() ||
+    "Sin asignar";
+
+  const domicilio = row.domicilio?.trim() || "—";
+  const distrito = row.distrito?.trim() || "—";
+  const provincia = row.provincia?.trim() || "—";
+  const cp = row.cp ? String(row.cp) : "—";
+
+  return {
+    id: String(row.id),
+    ownerName: row.propietario?.trim() || "—",
+    address: domicilio,
+    distrito,
+    municipio: distrito,
+    provincia,
+    cp,
+    valor: row.tasacion?.trim() || "—",
+    phone: row.telefono?.trim() || "—",
+    source: row.source_name?.trim() || "Sin origen",
+    phase: normalizePhase(row.fase_name),
+    status: normalizeStatus(row.estado),
+    fechaNoticia: row.fecha || row.created_at || "",
+    fechaContacto: "",
+    fechaValoracion: "",
+    hora: "",
+    planner: row.dominio_desc?.trim() || "—",
+    owner: ownerLabel,
+    createdAt: row.created_at || "",
+    assignedUser: ownerLabel,
+    propertyAddress:
+      domicilio !== "—"
+        ? `${domicilio}, ${distrito !== "—" ? distrito : provincia}`
+        : "—",
+    notes: row.memo?.trim() || "",
+    observaciones: [],
+  };
+}
+
+function startOfDay(date: Date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function getPlanningLabel(dateStr: string) {
+  if (!dateStr) return "Visitas Próximas";
+
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return "Visitas Próximas";
+
+  const today = startOfDay(new Date());
+  const target = startOfDay(date);
+
+  if (target < today) return "Visitas Anteriores";
+  if (target.getTime() === today.getTime()) return "Visitas de Hoy";
+
+  const weekday = target.toLocaleDateString("es-ES", { weekday: "long" });
+  return `Visitas del ${weekday}`;
+}
+
+export default function VisitasPage() {
+  const [items, setItems] = useState<Lead[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+
+  useEffect(() => {
+    async function loadVisitas() {
+      setLoading(true);
+
+      const { data, error } = await supabase
+        .from("crm_leads_view")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Supabase visitas error:", error);
+        setLoading(false);
+        return;
+      }
+
+      const mapped = (data ?? []).map((row) =>
+        mapCrmLeadToLead(row as CrmLeadRow)
+      );
+
+      const filtered = mapped.filter(
+        (lead) => lead.phase === "encargo" || lead.phase === "vender"
+      );
+
+      setItems(filtered);
+      setLoading(false);
+    }
+
+    loadVisitas();
+  }, []);
+
+  const filteredItems = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return items;
+
+    return items.filter((lead) =>
+      [
+        lead.ownerName,
+        lead.address,
+        lead.phone,
+        lead.owner,
+        lead.planner ?? "",
+        lead.notes ?? "",
+        getPlanningLabel(lead.fechaNoticia),
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [items, searchTerm]);
+
+  return (
+    <>
+      <Topbar title="Visitas" />
+
+      <main className="mt-14 flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border bg-card px-6 py-2.5">
+          <div className="flex items-center gap-4">
+            <span className="text-xs text-muted-foreground">
+              {filteredItems.length} visitas en total
+            </span>
+
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Buscar visitas..."
+                className="h-8 w-[260px] rounded-md border border-border bg-background pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+          </div>
+        </div>
+
+        {loading && (
+          <div className="shrink-0 border-b border-border bg-muted/40 px-6 py-2 text-xs text-muted-foreground">
+            Cargando visitas desde Supabase...
+          </div>
+        )}
+
+        <div className="relative flex-1 overflow-auto">
+          <table
+            className="w-full border-collapse text-sm"
+            style={{ minWidth: 1500 }}
+          >
+            <thead className="sticky top-0 z-20 bg-card">
+              <tr className="border-b border-border bg-card/95 text-left backdrop-blur">
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Planning
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  F. Visita
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Hora
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Equipo
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Inmueble
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Propietario
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Teléfono
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Medio
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Resultado
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Planner
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Owner
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Buyer
+                </th>
+              </tr>
+            </thead>
+
+            <tbody className="bg-background">
+              {filteredItems.map((lead, i) => (
+                <tr
+                  key={lead.id}
+                  className={cn(
+                    "border-b border-border transition-colors hover:bg-accent/40",
+                    i % 2 === 0 ? "bg-card" : "bg-background"
+                  )}
+                >
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                    {getPlanningLabel(lead.fechaNoticia)}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                    {fmt(lead.fechaNoticia)}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                    {lead.hora || "—"}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                    {lead.planner || "—"}
+                  </td>
+                  <td className="max-w-[260px] truncate px-3 py-2.5 text-xs text-muted-foreground">
+                    {lead.address}
+                  </td>
+                  <td className="px-3 py-2.5 font-medium text-foreground">
+                    {lead.ownerName}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                    {lead.phone}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                    Presencial
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                    {lead.status === "caliente"
+                      ? "Interés"
+                      : lead.status === "desestimada"
+                      ? "Cancelada"
+                      : "Pendiente"}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                    {lead.planner || "—"}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                    {lead.owner}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                    —
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </main>
+    </>
+  );
+}

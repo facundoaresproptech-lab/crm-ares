@@ -10,12 +10,20 @@ import {
   Settings,
   Building2,
   FileText,
+  ClipboardCheck,
+  Handshake,
+  Eye,
+  CalendarDays,
 } from "lucide-react";
 
 const navItems = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Leads", href: "/leads", icon: Users },
+  { label: "Valoraciones", href: "/valoraciones", icon: ClipboardCheck },
   { label: "Encargos", href: "/encargos", icon: FileText },
+  { label: "R.G.", href: "/rg", icon: Handshake },
+  { label: "Visitas", href: "/visitas", icon: Eye },
+  { label: "Planning", href: "/planning", icon: CalendarDays },
   { label: "Usuarios", href: "/usuarios", icon: UserCog },
   { label: "Ajustes", href: "/ajustes", icon: Settings },
 ];
