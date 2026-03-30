@@ -2,7 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Topbar } from "@/components/crm/topbar";
-import { NewLeadModal } from "@/components/crm/new-lead-modal";
+import {
+  NewLeadModal,
+  type NewLeadFormData,
+} from "@/components/crm/new-lead-modal";
 import { LeadDetailPanel } from "@/components/crm/lead-detail-panel";
 import { ImportLeadsCsvModal } from "@/components/crm/import-leads-csv-modal";
 import {
@@ -153,12 +156,12 @@ function fmt(d: string) {
 function normalizePhase(raw: string | null | undefined): Lead["phase"] {
   const value = (raw || "").toLowerCase().trim();
 
-  if (value === "noticia") return "noticia";
-  if (value === "concertada") return "concertada";
-  if (value === "valorada") return "valorada";
-  if (value === "cualificada") return "cualificada";
-  if (value === "encargo") return "encargo";
-  if (value === "vendida" || value === "vender") return "vender";
+  if (value.includes("noticia")) return "noticia";
+  if (value.includes("concertada")) return "concertada";
+  if (value.includes("valorada")) return "valorada";
+  if (value.includes("cualificada")) return "cualificada";
+  if (value.includes("encargo")) return "encargo";
+  if (value.includes("vendida") || value.includes("vender")) return "vender";
 
   return "noticia";
 }
@@ -410,17 +413,17 @@ export default function LeadsPage() {
 
   async function handleKanbanDragEnd(event: DragEndEvent) {
     const { active, over } = event;
-  
+
     if (!over) return;
-  
+
     const activeLeadId = String(active.id);
     const overId = String(over.id);
-  
+
     const activeLead = leads.find((lead) => lead.id === activeLeadId);
     if (!activeLead) return;
-  
+
     let targetPhase: Lead["phase"] | null = null;
-  
+
     if (
       overId === "noticia" ||
       overId === "concertada" ||
@@ -436,10 +439,10 @@ export default function LeadsPage() {
         targetPhase = targetLead.phase;
       }
     }
-  
+
     if (!targetPhase) return;
     if (activeLead.phase === targetPhase) return;
-  
+
     setLeads((prev) =>
       prev.map((lead) =>
         lead.id === activeLeadId ? { ...lead, phase: targetPhase! } : lead
@@ -500,6 +503,56 @@ export default function LeadsPage() {
       console.error("Error importing CSV to Supabase:", error);
       return;
     }
+
+    await loadLeadsFromSupabase();
+  }
+
+  async function handleCreateLead(form: NewLeadFormData) {
+    console.log("handleCreateLead fired", form);
+    alert("handleCreateLead fired");
+    const phaseMap: Record<string, number> = {
+      noticia: 1,
+      concertada: 2,
+      valorada: 3,
+      cualificada: 4,
+      encargo: 5,
+      vender: 6,
+    };
+
+    const rowsToInsert = [
+      {
+        propietario: form.ownerName || null,
+        domicilio: form.address || null,
+        telefono: form.phone || null,
+        tasacion: form.valor || null,
+        estado: form.status || null,
+        fecha: form.fechaNoticia || null,
+        source_desc: form.source || null,
+        comercial_user_desc: form.owner || null,
+        dominio_desc: form.distrito || null,
+        postal_id: form.cp && !isNaN(Number(form.cp)) ? Number(form.cp) : null,
+        fase_id: phaseMap[form.phase] ?? 1,
+        created_at: new Date().toISOString(),
+        memo: form.notes || null,
+        en_venta: null,
+        contact_user_desc: null,
+        source_id: null,
+        comercial_user_id: null,
+        contact_user_id: null,
+        team_id: null,
+        deleted_at: null,
+      },
+    ];
+
+    const { error } = await supabase.from("opportunities").insert(rowsToInsert);
+
+if (error) {
+  console.error("Error creating lead in Supabase:", error);
+  alert(`Error creating lead: ${error.message}`);
+  return;
+}
+
+alert("Lead created in Supabase");
 
     await loadLeadsFromSupabase();
   }
@@ -919,10 +972,10 @@ export default function LeadsPage() {
           </div>
         ) : (
           <DndContext
-  sensors={sensors}
-  collisionDetection={closestCorners}
-  onDragEnd={handleKanbanDragEnd}
->
+            sensors={sensors}
+            collisionDetection={closestCorners}
+            onDragEnd={handleKanbanDragEnd}
+          >
             <div className="flex-1 overflow-x-auto overflow-y-hidden px-6 py-5">
               <div className="flex h-full gap-4">
                 {kanbanGroups.map(({ phase, leads }) => (
@@ -939,7 +992,11 @@ export default function LeadsPage() {
         )}
       </main>
 
-      <NewLeadModal open={modalOpen} onOpenChange={setModalOpen} />
+      <NewLeadModal
+        open={modalOpen}
+        onOpenChange={setModalOpen}
+        onSubmit={handleCreateLead}
+      />
 
       <ImportLeadsCsvModal
         open={importOpen}
