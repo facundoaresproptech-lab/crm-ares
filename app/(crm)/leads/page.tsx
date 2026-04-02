@@ -39,11 +39,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import {
-  type Lead,
-  PHASE_LABELS,
-  PHASE_COLORS,
-} from "@/lib/crm-data";
+import { type Lead, PHASE_LABELS, PHASE_COLORS } from "@/lib/crm-data";
 import {
   Dialog,
   DialogContent,
@@ -92,6 +88,15 @@ const KANBAN_PHASES: Lead["phase"][] = [
   "encargo",
   "vender",
 ];
+
+const PHASE_ID_MAP: Record<Lead["phase"], number> = {
+  noticia: 1,
+  concertada: 2,
+  valorada: 3,
+  cualificada: 4,
+  encargo: 5,
+  vender: 6,
+};
 
 function SortIcon({
   col,
@@ -413,7 +418,6 @@ export default function LeadsPage() {
 
   async function handleKanbanDragEnd(event: DragEndEvent) {
     const { active, over } = event;
-
     if (!over) return;
 
     const activeLeadId = String(active.id);
@@ -435,13 +439,10 @@ export default function LeadsPage() {
       targetPhase = overId;
     } else {
       const targetLead = leads.find((lead) => lead.id === overId);
-      if (targetLead) {
-        targetPhase = targetLead.phase;
-      }
+      if (targetLead) targetPhase = targetLead.phase;
     }
 
-    if (!targetPhase) return;
-    if (activeLead.phase === targetPhase) return;
+    if (!targetPhase || activeLead.phase === targetPhase) return;
 
     setLeads((prev) =>
       prev.map((lead) =>
@@ -495,9 +496,7 @@ export default function LeadsPage() {
       deleted_at: null,
     }));
 
-    const { error } = await supabase
-      .from("opportunities")
-      .insert(rowsToInsert);
+    const { error } = await supabase.from("opportunities").insert(rowsToInsert);
 
     if (error) {
       console.error("Error importing CSV to Supabase:", error);
@@ -508,17 +507,6 @@ export default function LeadsPage() {
   }
 
   async function handleCreateLead(form: NewLeadFormData) {
-    console.log("handleCreateLead fired", form);
-    alert("handleCreateLead fired");
-    const phaseMap: Record<string, number> = {
-      noticia: 1,
-      concertada: 2,
-      valorada: 3,
-      cualificada: 4,
-      encargo: 5,
-      vender: 6,
-    };
-
     const rowsToInsert = [
       {
         propietario: form.ownerName || null,
@@ -531,7 +519,7 @@ export default function LeadsPage() {
         comercial_user_desc: form.owner || null,
         dominio_desc: form.distrito || null,
         postal_id: form.cp && !isNaN(Number(form.cp)) ? Number(form.cp) : null,
-        fase_id: phaseMap[form.phase] ?? 1,
+        fase_id: PHASE_ID_MAP[form.phase as Lead["phase"]] ?? 1,
         created_at: new Date().toISOString(),
         memo: form.notes || null,
         en_venta: null,
@@ -546,15 +534,48 @@ export default function LeadsPage() {
 
     const { error } = await supabase.from("opportunities").insert(rowsToInsert);
 
-if (error) {
-  console.error("Error creating lead in Supabase:", error);
-  alert(`Error creating lead: ${error.message}`);
-  return;
-}
-
-alert("Lead created in Supabase");
+    if (error) {
+      console.error("Error creating lead in Supabase:", error);
+      return;
+    }
 
     await loadLeadsFromSupabase();
+  }
+
+  async function handleSaveLead(next: Lead) {
+    console.log("handleSaveLead fired", next);
+    alert(`handleSaveLead fired: ${next.phase}`);
+  
+    const { data, error } = await supabase
+      .from("opportunities")
+      .update({
+        propietario: next.ownerName || null,
+        domicilio: next.address || null,
+        telefono: next.phone || null,
+        tasacion: next.valor || null,
+        estado: next.status || null,
+        fecha: next.fechaNoticia || null,
+        comercial_user_desc: next.owner || null,
+        dominio_desc: next.planner || null,
+        memo: next.notes || null,
+        fase_id: PHASE_ID_MAP[next.phase] ?? 1,
+      })
+      .eq("id", Number(next.id))
+      .select();
+  
+    if (error) {
+      console.error("Error updating lead in Supabase:", error);
+      alert(`Error updating lead: ${error.message}`);
+      return;
+    }
+  
+    console.log("Lead updated in Supabase", data);
+    alert("Lead updated in Supabase");
+  
+    await loadLeadsFromSupabase();
+    setSelectedLead((prev) =>
+      prev && prev.id === next.id ? { ...prev, ...next } : prev
+    );
   }
 
   useEffect(() => {
@@ -630,11 +651,8 @@ alert("Lead created in Supabase");
   function toggleRowSelection(id: string) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }
@@ -643,13 +661,9 @@ alert("Lead created in Supabase");
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (checked) {
-        for (const lead of sortedLeads) {
-          next.add(lead.id);
-        }
+        for (const lead of sortedLeads) next.add(lead.id);
       } else {
-        for (const lead of sortedLeads) {
-          next.delete(lead.id);
-        }
+        for (const lead of sortedLeads) next.delete(lead.id);
       }
       return next;
     });
@@ -1007,6 +1021,7 @@ alert("Lead created in Supabase");
       <LeadDetailPanel
         lead={selectedLead}
         onClose={() => setSelectedLead(null)}
+        onSaveLead={handleSaveLead}
       />
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
