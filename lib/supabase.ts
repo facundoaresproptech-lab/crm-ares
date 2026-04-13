@@ -13,9 +13,10 @@ export type CrmUser = {
   id: number;
   auth_id: string;
   name: string;
-  rol: "Admin" | "Coordinador" | "Manager" | "Comercial";
+  rol: "Admin" | "Coordinador" | "Comercial";
   user: string | null;
   enabled: boolean;
+  is_visitador: boolean;
 };
 
 // Cliente singleton para el browser

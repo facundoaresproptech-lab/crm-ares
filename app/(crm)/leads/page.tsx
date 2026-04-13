@@ -187,6 +187,16 @@ function normalizeValor(raw: string | null | undefined) {
   return raw;
 }
 
+function normalizeDate(raw: string | null | undefined): string {
+  if (!raw) return "";
+  // Si ya está en formato yyyy-MM-dd lo devolvemos tal cual
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  // Intentamos parsear formatos como "11-Sep-25" o "2025-09-11T..."
+  const parsed = new Date(raw);
+  if (isNaN(parsed.getTime())) return "";
+  return parsed.toISOString().slice(0, 10);
+}
+
 function mapCrmLeadToLead(row: CrmLeadRow): Lead {
   const ownerLabel =
     row.comercial_name?.trim() ||
@@ -211,7 +221,7 @@ function mapCrmLeadToLead(row: CrmLeadRow): Lead {
     source: row.source_name?.trim() || "Sin origen",
     phase: normalizePhase(row.fase_name),
     status: normalizeStatus(row.estado),
-    fechaNoticia: row.fecha || row.created_at || "",
+    fechaNoticia: normalizeDate(row.fecha || row.created_at || ""),
     fechaContacto: "",
     fechaValoracion: "",
     hora: "",
@@ -576,10 +586,11 @@ export default function LeadsPage() {
       })
       .eq("id", Number(next.id));
 
-    if (error) {
-      console.error("Error actualizando lead:", error);
-      return;
-    }
+      if (error) {
+        console.error("Error actualizando lead:", error);
+        return;
+      }
+      console.log("Lead actualizado correctamente, id:", Number(next.id), "fase_id:", PHASE_ID_MAP[next.phase]);
 
     await loadLeadsFromSupabase();
     setSelectedLead((prev) =>

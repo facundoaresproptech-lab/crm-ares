@@ -71,8 +71,7 @@ export function useUser() {
 export function canViewAllLeads(crmUser: CrmUser): boolean {
   return (
     crmUser.rol === "Admin" ||
-    crmUser.rol === "Coordinador" ||
-    crmUser.rol === "Manager"
+    crmUser.rol === "Coordinador"
   );
 }
 

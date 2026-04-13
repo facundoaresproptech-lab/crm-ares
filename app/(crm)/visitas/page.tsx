@@ -1,33 +1,72 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Topbar } from "@/components/crm/topbar";
 import { supabase } from "@/lib/supabase";
-import { Search } from "lucide-react";
+import { useUser } from "@/lib/hooks/useUser";
+import { Search, Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { Lead } from "@/lib/crm-data";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 
-type CrmLeadRow = {
-    id: number;
-    created_at: string | null;
-    fecha: string | null;
-    propietario: string | null;
-    telefono: string | null;
-    domicilio: string | null;
-    tasacion: string | null;
-    estado: string | null;
-    memo: string | null;
-    fase_name: string | null;
-    source_name: string | null;
-    comercial_name: string | null;
-    contact_name: string | null;
-    cp: number | null;
-    provincia: string | null;
-    distrito: string | null;
-    dominio_desc: string | null;
-  };
+type Visita = {
+  id: number;
+  opportunity_id: number | null;
+  planning: string | null;
+  fecha_visita: string | null;
+  hora: string | null;
+  equipo: string | null;
+  medio: string | null;
+  resultado: string | null;
+  planner: string | null;
+  owner: string | null;
+  buyer: string | null;
+  notas: string | null;
+  created_by: string;
+  created_at: string;
+};
 
-function fmt(d: string) {
+type InmuebleOption = {
+  id: number;
+  label: string;
+  propietario: string | null;
+  domicilio: string | null;
+  owner: string | null;
+};
+
+const RESULTADO_OPTIONS = [
+  "Pendiente",
+  "Realizada",
+  "Cancelada",
+  "No presentado",
+  "Interés",
+  "Sin interés",
+];
+
+const MEDIO_OPTIONS = [
+  "Presencial",
+  "Online",
+  "Telefónica",
+];
+
+function fmt(d: string | null) {
   if (!d) return "—";
   const parsed = new Date(d);
   if (isNaN(parsed.getTime())) return d;
@@ -38,147 +77,154 @@ function fmt(d: string) {
   });
 }
 
-function normalizePhase(raw: string | null | undefined): Lead["phase"] {
-  const value = (raw || "").toLowerCase().trim();
-
-  if (value.includes("noticia")) return "noticia";
-  if (value.includes("concertada")) return "concertada";
-  if (value.includes("valorada")) return "valorada";
-  if (value.includes("cualificada")) return "cualificada";
-  if (value.includes("encargo")) return "encargo";
-  if (value.includes("vendida") || value.includes("vender")) return "vender";
-
-  return "noticia";
-}
-
-function normalizeStatus(raw: string | null | undefined): Lead["status"] {
-  const value = (raw || "").toLowerCase().trim();
-
-  if (value === "identificar" || value === "identificada") return "identificar";
-  if (value === "seguimiento") return "seguimiento";
-  if (value === "caliente") return "caliente";
-  if (value === "desestimada") return "desestimada";
-
-  return "seguimiento";
-}
-
-function mapCrmLeadToLead(row: CrmLeadRow): Lead {
-  const ownerLabel =
-    row.comercial_name?.trim() ||
-    row.contact_name?.trim() ||
-    "Sin asignar";
-
-  const domicilio = row.domicilio?.trim() || "—";
-  const distrito = row.distrito?.trim() || "—";
-  const provincia = row.provincia?.trim() || "—";
-  const cp = row.cp ? String(row.cp) : "—";
-
-  return {
-    id: String(row.id),
-    ownerName: row.propietario?.trim() || "—",
-    address: domicilio,
-    distrito,
-    municipio: distrito,
-    provincia,
-    cp,
-    valor: row.tasacion?.trim() || "—",
-    phone: row.telefono?.trim() || "—",
-    source: row.source_name?.trim() || "Sin origen",
-    phase: normalizePhase(row.fase_name),
-    status: normalizeStatus(row.estado),
-    fechaNoticia: row.fecha || row.created_at || "",
-    fechaContacto: "",
-    fechaValoracion: "",
-    hora: "",
-    planner: row.dominio_desc?.trim() || "—",
-    owner: ownerLabel,
-    createdAt: row.created_at || "",
-    assignedUser: ownerLabel,
-    propertyAddress:
-      domicilio !== "—"
-        ? `${domicilio}, ${distrito !== "—" ? distrito : provincia}`
-        : "—",
-    notes: row.memo?.trim() || "",
-    observaciones: [],
-  };
-}
-
-function startOfDay(date: Date) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function getPlanningLabel(dateStr: string) {
-  if (!dateStr) return "Visitas Próximas";
-
-  const date = new Date(dateStr);
-  if (isNaN(date.getTime())) return "Visitas Próximas";
-
-  const today = startOfDay(new Date());
-  const target = startOfDay(date);
-
-  if (target < today) return "Visitas Anteriores";
-  if (target.getTime() === today.getTime()) return "Visitas de Hoy";
-
-  const weekday = target.toLocaleDateString("es-ES", { weekday: "long" });
-  return `Visitas del ${weekday}`;
-}
-
 export default function VisitasPage() {
-  const [items, setItems] = useState<Lead[]>([]);
+  const { userWithRole } = useUser();
+  const [visitas, setVisitas] = useState<Visita[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [inmuebles, setInmuebles] = useState<InmuebleOption[]>([]);
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    async function loadVisitas() {
-      setLoading(true);
+  const [form, setForm] = useState({
+    opportunity_id: "",
+    planning: "",
+    fecha_visita: "",
+    hora: "",
+    equipo: "",
+    medio: "Presencial",
+    resultado: "Pendiente",
+    planner: "",
+    owner: "",
+    buyer: "",
+    notas: "",
+  });
 
-      const { data, error } = await supabase
-        .from("crm_leads_view")
-        .select("*")
-        .order("created_at", { ascending: false });
+  function setField(field: string, value: string) {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  }
 
-      if (error) {
-        console.error("Supabase visitas error:", error);
-        setLoading(false);
-        return;
-      }
+  async function loadVisitas() {
+    setLoading(true);
 
-      const mapped = (data ?? []).map((row) =>
-        mapCrmLeadToLead(row as CrmLeadRow)
-      );
+    const rol = userWithRole?.crmUser.rol;
+    const nombre = userWithRole?.crmUser.name;
+    const isVisitador = userWithRole?.crmUser.is_visitador;
 
-      const filtered = mapped.filter(
-        (lead) => lead.phase === "encargo" || lead.phase === "vender"
-      );
+    let query = supabase
+      .from("visitas")
+      .select("*")
+      .order("fecha_visita", { ascending: false });
 
-      setItems(filtered);
-      setLoading(false);
+    // Comercial no visitador: solo ve sus visitas
+    if (rol === "Comercial" && !isVisitador && nombre) {
+      query = query.or(`owner.eq.${nombre},planner.eq.${nombre}`);
     }
 
-    loadVisitas();
-  }, []);
+    const { data, error } = await query;
 
-  const filteredItems = useMemo(() => {
+    if (error) {
+      console.error("Error cargando visitas:", error);
+      setLoading(false);
+      return;
+    }
+
+    setVisitas((data ?? []) as Visita[]);
+    setLoading(false);
+  }
+
+  async function loadInmuebles() {
+    const { data, error } = await supabase
+      .from("crm_leads_view")
+      .select("id, propietario, domicilio, comercial_name")
+      .eq("fase_name", "Encargo")
+      .order("propietario", { ascending: true });
+
+    if (error) {
+      console.error("Error cargando inmuebles:", error);
+      return;
+    }
+
+    const mapped = (data ?? []).map((row) => ({
+      id: row.id as number,
+      label: `${row.domicilio || "Sin dirección"} — ${row.propietario || "Sin propietario"}`,
+      propietario: row.propietario as string | null,
+      domicilio: row.domicilio as string | null,
+      owner: row.comercial_name as string | null,
+    }));
+
+    setInmuebles(mapped);
+  }
+
+  useEffect(() => {
+    if (userWithRole) {
+      void loadVisitas();
+      void loadInmuebles();
+    }
+  }, [userWithRole]);
+
+  async function handleSaveVisita() {
+    if (!form.opportunity_id) return;
+    setSaving(true);
+
+    const { error } = await supabase.from("visitas").insert({
+      opportunity_id: Number(form.opportunity_id),
+      planning: form.planning || null,
+      fecha_visita: form.fecha_visita || null,
+      hora: form.hora || null,
+      equipo: form.equipo || null,
+      medio: form.medio || null,
+      resultado: form.resultado || null,
+      planner: form.planner || null,
+      owner: form.owner || null,
+      buyer: form.buyer || null,
+      notas: form.notas || null,
+      created_by: userWithRole?.crmUser.name ?? "Sistema",
+    });
+
+    setSaving(false);
+
+    if (error) {
+      console.error("Error guardando visita:", error);
+      return;
+    }
+
+    setModalOpen(false);
+    setForm({
+      opportunity_id: "",
+      planning: "",
+      fecha_visita: "",
+      hora: "",
+      equipo: "",
+      medio: "Presencial",
+      resultado: "Pendiente",
+      planner: "",
+      owner: "",
+      buyer: "",
+      notas: "",
+    });
+
+    void loadVisitas();
+  }
+
+  const filteredVisitas = visitas.filter((v) => {
     const q = searchTerm.trim().toLowerCase();
-    if (!q) return items;
-
-    return items.filter((lead) =>
-      [
-        lead.ownerName,
-        lead.address,
-        lead.phone,
-        lead.owner,
-        lead.planner ?? "",
-        lead.notes ?? "",
-        getPlanningLabel(lead.fechaNoticia),
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(q)
-    );
-  }, [items, searchTerm]);
+    if (!q) return true;
+    return [
+      v.planning,
+      v.fecha_visita,
+      v.equipo,
+      v.planner,
+      v.owner,
+      v.buyer,
+      v.resultado,
+      v.medio,
+      v.notas,
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(q);
+  });
 
   return (
     <>
@@ -188,9 +234,8 @@ export default function VisitasPage() {
         <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border bg-card px-6 py-2.5">
           <div className="flex items-center gap-4">
             <span className="text-xs text-muted-foreground">
-              {filteredItems.length} visitas en total
+              {filteredVisitas.length} visitas en total
             </span>
-
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <input
@@ -202,6 +247,15 @@ export default function VisitasPage() {
               />
             </div>
           </div>
+
+          <Button
+            size="sm"
+            className="h-7 gap-1.5 text-xs font-semibold"
+            onClick={() => setModalOpen(true)}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Agregar Visita
+          </Button>
         </div>
 
         {loading && (
@@ -211,106 +265,168 @@ export default function VisitasPage() {
         )}
 
         <div className="relative flex-1 overflow-auto">
-          <table
-            className="w-full border-collapse text-sm"
-            style={{ minWidth: 1500 }}
-          >
+          <table className="w-full border-collapse text-sm" style={{ minWidth: 1400 }}>
             <thead className="sticky top-0 z-20 bg-card">
               <tr className="border-b border-border bg-card/95 text-left backdrop-blur">
-                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Planning
-                </th>
-                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  F. Visita
-                </th>
-                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Hora
-                </th>
-                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Equipo
-                </th>
-                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Inmueble
-                </th>
-                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Propietario
-                </th>
-                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Teléfono
-                </th>
-                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Medio
-                </th>
-                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Resultado
-                </th>
-                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Planner
-                </th>
-                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Owner
-                </th>
-                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Buyer
-                </th>
+                {["Planning", "F. Visita", "Hora", "Equipo", "Inmueble", "Propietario", "Teléfono", "Medio", "Resultado", "Planner", "Owner", "Buyer"].map((col) => (
+                  <th key={col} className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {col}
+                  </th>
+                ))}
               </tr>
             </thead>
-
             <tbody className="bg-background">
-              {filteredItems.map((lead, i) => (
-                <tr
-                  key={lead.id}
-                  className={cn(
-                    "border-b border-border transition-colors hover:bg-accent/40",
-                    i % 2 === 0 ? "bg-card" : "bg-background"
-                  )}
-                >
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                    {getPlanningLabel(lead.fechaNoticia)}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                    {fmt(lead.fechaNoticia)}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                    {lead.hora || "—"}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                    {lead.planner || "—"}
-                  </td>
-                  <td className="max-w-[260px] truncate px-3 py-2.5 text-xs text-muted-foreground">
-                    {lead.address}
-                  </td>
-                  <td className="px-3 py-2.5 font-medium text-foreground">
-                    {lead.ownerName}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                    {lead.phone}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                    Presencial
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                    {lead.status === "caliente"
-                      ? "Interés"
-                      : lead.status === "desestimada"
-                      ? "Cancelada"
-                      : "Pendiente"}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                    {lead.planner || "—"}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                    {lead.owner}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                    —
+              {filteredVisitas.length === 0 && !loading ? (
+                <tr>
+                  <td colSpan={12} className="px-6 py-10 text-center text-xs text-muted-foreground">
+                    No hay visitas registradas
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filteredVisitas.map((v, i) => {
+                  const inmueble = inmuebles.find((im) => im.id === v.opportunity_id);
+                  return (
+                    <tr
+                      key={v.id}
+                      className={cn(
+                        "border-b border-border transition-colors hover:bg-accent/40",
+                        i % 2 === 0 ? "bg-card" : "bg-background"
+                      )}
+                    >
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.planning || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmt(v.fecha_visita)}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.hora || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.equipo || "—"}</td>
+                      <td className="max-w-[200px] truncate px-3 py-2.5 text-xs text-muted-foreground">
+                        {inmueble?.domicilio || "—"}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs font-medium text-foreground">
+                        {inmueble?.propietario || "—"}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">—</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.medio || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.resultado || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.planner || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.owner || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.buyer || "—"}</td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
       </main>
+
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold">Agregar Visita</DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Registrá una nueva visita a un inmueble en encargo.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-2 gap-x-4 gap-y-4 py-2">
+            <div className="col-span-2 flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Inmueble (Encargo) *</Label>
+              <Select value={form.opportunity_id} onValueChange={(v) => {
+                const inmueble = inmuebles.find((im) => String(im.id) === v);
+                setField("opportunity_id", v);
+                if (inmueble?.owner) setField("owner", inmueble.owner);
+              }}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue placeholder="Seleccioná un inmueble..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {inmuebles.map((im) => (
+                    <SelectItem key={im.id} value={String(im.id)} className="text-sm">
+                      {im.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Planning</Label>
+              <Input value={form.planning} onChange={(e) => setField("planning", e.target.value)} className="h-8 text-sm" placeholder="Ej: Alcorcón" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Fecha visita</Label>
+              <Input type="date" value={form.fecha_visita} onChange={(e) => setField("fecha_visita", e.target.value)} className="h-8 text-sm" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Hora</Label>
+              <Input type="time" value={form.hora} onChange={(e) => setField("hora", e.target.value)} className="h-8 text-sm" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Medio</Label>
+              <Select value={form.medio} onValueChange={(v) => setField("medio", v)}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MEDIO_OPTIONS.map((o) => (
+                    <SelectItem key={o} value={o} className="text-sm">{o}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Resultado</Label>
+              <Select value={form.resultado} onValueChange={(v) => setField("resultado", v)}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {RESULTADO_OPTIONS.map((o) => (
+                    <SelectItem key={o} value={o} className="text-sm">{o}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Equipo</Label>
+              <Input value={form.equipo} onChange={(e) => setField("equipo", e.target.value)} className="h-8 text-sm" placeholder="Ej: Abdel, Gonza" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Planner</Label>
+              <Input value={form.planner} onChange={(e) => setField("planner", e.target.value)} className="h-8 text-sm" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Owner</Label>
+              <Input value={form.owner} onChange={(e) => setField("owner", e.target.value)} className="h-8 text-sm" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Buyer</Label>
+              <Input value={form.buyer} onChange={(e) => setField("buyer", e.target.value)} className="h-8 text-sm" placeholder="Nombre del comprador" />
+            </div>
+
+            <div className="col-span-2 flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Notas</Label>
+              <Textarea value={form.notas} onChange={(e) => setField("notas", e.target.value)} className="text-sm min-h-[72px] resize-none" placeholder="Observaciones de la visita..." />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setModalOpen(false)} disabled={saving}>
+              Cancelar
+            </Button>
+            <Button size="sm" onClick={() => void handleSaveVisita()} disabled={saving || !form.opportunity_id}>
+              {saving ? "Guardando..." : "Guardar visita"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
