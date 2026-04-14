@@ -29,16 +29,18 @@ import { Textarea } from "@/components/ui/textarea";
 type Visita = {
   id: number;
   opportunity_id: number | null;
-  planning: string | null;
-  fecha_visita: string | null;
-  hora: string | null;
-  equipo: string | null;
-  medio: string | null;
-  resultado: string | null;
+  estado: string | null;
+  dominio: string | null;
   planner: string | null;
   owner: string | null;
+  fecha_visita: string | null;
+  hora: string | null;
   buyer: string | null;
-  notas: string | null;
+  nombre_apellido: string | null;
+  telefono: string | null;
+  dni: string | null;
+  vende: boolean | null;
+  observaciones_visita: string | null;
   created_by: string;
   created_at: string;
 };
@@ -49,22 +51,43 @@ type InmuebleOption = {
   propietario: string | null;
   domicilio: string | null;
   owner: string | null;
+  planner: string | null;
+  estado: string | null;
+  dominio: string | null;
+  telefono: string | null;
 };
 
-const RESULTADO_OPTIONS = [
-  "Pendiente",
-  "Realizada",
-  "Cancelada",
-  "No presentado",
-  "Interés",
-  "Sin interés",
-];
+type VisitaForm = {
+  opportunity_id: string;
+  estado: string;
+  dominio: string;
+  planner: string;
+  owner: string;
+  fecha_visita: string;
+  hora: string;
+  buyer: string;
+  nombre_apellido: string;
+  telefono: string;
+  dni: string;
+  vende: string;
+  observaciones_visita: string;
+};
 
-const MEDIO_OPTIONS = [
-  "Presencial",
-  "Online",
-  "Telefónica",
-];
+const EMPTY_FORM: VisitaForm = {
+  opportunity_id: "",
+  estado: "",
+  dominio: "",
+  planner: "",
+  owner: "",
+  fecha_visita: "",
+  hora: "",
+  buyer: "",
+  nombre_apellido: "",
+  telefono: "",
+  dni: "",
+  vende: "",
+  observaciones_visita: "",
+};
 
 function fmt(d: string | null) {
   if (!d) return "—";
@@ -77,36 +100,47 @@ function fmt(d: string | null) {
   });
 }
 
+function visitaToForm(v: Visita): VisitaForm {
+  return {
+    opportunity_id: v.opportunity_id ? String(v.opportunity_id) : "",
+    estado: v.estado || "",
+    dominio: v.dominio || "",
+    planner: v.planner || "",
+    owner: v.owner || "",
+    fecha_visita: v.fecha_visita || "",
+    hora: v.hora || "",
+    buyer: v.buyer || "",
+    nombre_apellido: v.nombre_apellido || "",
+    telefono: v.telefono || "",
+    dni: v.dni || "",
+    vende: v.vende === true ? "si" : v.vende === false ? "no" : "",
+    observaciones_visita: v.observaciones_visita || "",
+  };
+}
+
 export default function VisitasPage() {
   const { userWithRole } = useUser();
   const [visitas, setVisitas] = useState<Visita[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [modalOpen, setModalOpen] = useState(false);
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [selectedVisita, setSelectedVisita] = useState<Visita | null>(null);
   const [inmuebles, setInmuebles] = useState<InmuebleOption[]>([]);
   const [saving, setSaving] = useState(false);
-
-  const [form, setForm] = useState({
-    opportunity_id: "",
-    planning: "",
-    fecha_visita: "",
-    hora: "",
-    equipo: "",
-    medio: "Presencial",
-    resultado: "Pendiente",
-    planner: "",
-    owner: "",
-    buyer: "",
-    notas: "",
-  });
+  const [form, setForm] = useState<VisitaForm>(EMPTY_FORM);
+  const [editForm, setEditForm] = useState<VisitaForm>(EMPTY_FORM);
 
   function setField(field: string, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
   }
 
+  function setEditField(field: string, value: string) {
+    setEditForm((prev) => ({ ...prev, [field]: value }));
+  }
+
   async function loadVisitas() {
     setLoading(true);
-
     const rol = userWithRole?.crmUser.rol;
     const nombre = userWithRole?.crmUser.name;
     const isVisitador = userWithRole?.crmUser.is_visitador;
@@ -116,19 +150,16 @@ export default function VisitasPage() {
       .select("*")
       .order("fecha_visita", { ascending: false });
 
-    // Comercial no visitador: solo ve sus visitas
     if (rol === "Comercial" && !isVisitador && nombre) {
       query = query.or(`owner.eq.${nombre},planner.eq.${nombre}`);
     }
 
     const { data, error } = await query;
-
     if (error) {
       console.error("Error cargando visitas:", error);
       setLoading(false);
       return;
     }
-
     setVisitas((data ?? []) as Visita[]);
     setLoading(false);
   }
@@ -136,24 +167,23 @@ export default function VisitasPage() {
   async function loadInmuebles() {
     const { data, error } = await supabase
       .from("crm_leads_view")
-      .select("id, propietario, domicilio, comercial_name")
+      .select("id, propietario, domicilio, comercial_name, dominio_desc, telefono, estado")
       .eq("fase_name", "Encargo")
       .order("propietario", { ascending: true });
 
-    if (error) {
-      console.error("Error cargando inmuebles:", error);
-      return;
-    }
+    if (error) return;
 
-    const mapped = (data ?? []).map((row) => ({
+    setInmuebles((data ?? []).map((row) => ({
       id: row.id as number,
       label: `${row.domicilio || "Sin dirección"} — ${row.propietario || "Sin propietario"}`,
       propietario: row.propietario as string | null,
       domicilio: row.domicilio as string | null,
       owner: row.comercial_name as string | null,
-    }));
-
-    setInmuebles(mapped);
+      planner: row.dominio_desc as string | null,
+      estado: row.estado as string | null,
+      dominio: row.dominio_desc as string | null,
+      telefono: row.telefono as string | null,
+    })));
   }
 
   useEffect(() => {
@@ -163,68 +193,92 @@ export default function VisitasPage() {
     }
   }, [userWithRole]);
 
+  function handleInmuebleSelect(value: string) {
+    const inmueble = inmuebles.find((im) => String(im.id) === value);
+    setForm((prev) => ({
+      ...prev,
+      opportunity_id: value,
+      estado: inmueble?.estado || "",
+      dominio: inmueble?.dominio || "",
+      planner: inmueble?.planner || "",
+      owner: inmueble?.owner || "",
+      nombre_apellido: "",
+      telefono: "",
+      buyer: userWithRole?.crmUser.name || "",
+    }));
+  }
+
+  function handleRowClick(v: Visita) {
+    setSelectedVisita(v);
+    setEditForm(visitaToForm(v));
+    setEditModalOpen(true);
+  }
+
   async function handleSaveVisita() {
     if (!form.opportunity_id) return;
     setSaving(true);
 
     const { error } = await supabase.from("visitas").insert({
       opportunity_id: Number(form.opportunity_id),
-      planning: form.planning || null,
-      fecha_visita: form.fecha_visita || null,
-      hora: form.hora || null,
-      equipo: form.equipo || null,
-      medio: form.medio || null,
-      resultado: form.resultado || null,
+      estado: form.estado || null,
+      dominio: form.dominio || null,
       planner: form.planner || null,
       owner: form.owner || null,
+      fecha_visita: form.fecha_visita || null,
+      hora: form.hora || null,
       buyer: form.buyer || null,
-      notas: form.notas || null,
+      nombre_apellido: form.nombre_apellido || null,
+      telefono: form.telefono || null,
+      dni: form.dni || null,
+      vende: form.vende === "si" ? true : form.vende === "no" ? false : null,
+      observaciones_visita: form.observaciones_visita || null,
       created_by: userWithRole?.crmUser.name ?? "Sistema",
     });
 
     setSaving(false);
+    if (error) { console.error("Error guardando visita:", error); return; }
 
-    if (error) {
-      console.error("Error guardando visita:", error);
-      return;
-    }
+    setAddModalOpen(false);
+    setForm(EMPTY_FORM);
+    void loadVisitas();
+  }
 
-    setModalOpen(false);
-    setForm({
-      opportunity_id: "",
-      planning: "",
-      fecha_visita: "",
-      hora: "",
-      equipo: "",
-      medio: "Presencial",
-      resultado: "Pendiente",
-      planner: "",
-      owner: "",
-      buyer: "",
-      notas: "",
-    });
+  async function handleUpdateVisita() {
+    if (!selectedVisita) return;
+    setSaving(true);
 
+    const { error } = await supabase
+      .from("visitas")
+      .update({
+        fecha_visita: editForm.fecha_visita || null,
+        hora: editForm.hora || null,
+        nombre_apellido: editForm.nombre_apellido || null,
+        telefono: editForm.telefono || null,
+        buyer: editForm.buyer || null,
+        dni: editForm.dni || null,
+        vende: editForm.vende === "si" ? true : editForm.vende === "no" ? false : null,
+        observaciones_visita: editForm.observaciones_visita || null,
+      })
+      .eq("id", selectedVisita.id);
+
+    setSaving(false);
+    if (error) { console.error("Error actualizando visita:", error); return; }
+
+    setEditModalOpen(false);
+    setSelectedVisita(null);
     void loadVisitas();
   }
 
   const filteredVisitas = visitas.filter((v) => {
     const q = searchTerm.trim().toLowerCase();
     if (!q) return true;
-    return [
-      v.planning,
-      v.fecha_visita,
-      v.equipo,
-      v.planner,
-      v.owner,
-      v.buyer,
-      v.resultado,
-      v.medio,
-      v.notas,
-    ]
-      .join(" ")
-      .toLowerCase()
-      .includes(q);
+    return [v.estado, v.dominio, v.planner, v.owner, v.buyer,
+      v.nombre_apellido, v.telefono, v.dni, v.observaciones_visita]
+      .join(" ").toLowerCase().includes(q);
   });
+
+  const columns = ["Estado", "Dominio", "Planner", "Owner", "Inmueble",
+    "Fecha", "Hora", "Buyer", "Nombre y Apellido", "Teléfono", "DNI", "Vende?", "Observaciones"];
 
   return (
     <>
@@ -247,12 +301,7 @@ export default function VisitasPage() {
               />
             </div>
           </div>
-
-          <Button
-            size="sm"
-            className="h-7 gap-1.5 text-xs font-semibold"
-            onClick={() => setModalOpen(true)}
-          >
+          <Button size="sm" className="h-7 gap-1.5 text-xs font-semibold" onClick={() => setAddModalOpen(true)}>
             <Plus className="h-3.5 w-3.5" />
             Agregar Visita
           </Button>
@@ -265,11 +314,11 @@ export default function VisitasPage() {
         )}
 
         <div className="relative flex-1 overflow-auto">
-          <table className="w-full border-collapse text-sm" style={{ minWidth: 1400 }}>
+          <table className="w-full border-collapse text-sm" style={{ minWidth: 1600 }}>
             <thead className="sticky top-0 z-20 bg-card">
               <tr className="border-b border-border bg-card/95 text-left backdrop-blur">
-                {["Planning", "F. Visita", "Hora", "Equipo", "Inmueble", "Propietario", "Teléfono", "Medio", "Resultado", "Planner", "Owner", "Buyer"].map((col) => (
-                  <th key={col} className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {columns.map((col) => (
+                  <th key={col} className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground whitespace-nowrap">
                     {col}
                   </th>
                 ))}
@@ -278,7 +327,7 @@ export default function VisitasPage() {
             <tbody className="bg-background">
               {filteredVisitas.length === 0 && !loading ? (
                 <tr>
-                  <td colSpan={12} className="px-6 py-10 text-center text-xs text-muted-foreground">
+                  <td colSpan={columns.length} className="px-6 py-10 text-center text-xs text-muted-foreground">
                     No hay visitas registradas
                   </td>
                 </tr>
@@ -288,27 +337,31 @@ export default function VisitasPage() {
                   return (
                     <tr
                       key={v.id}
+                      onClick={() => handleRowClick(v)}
                       className={cn(
-                        "border-b border-border transition-colors hover:bg-accent/40",
+                        "cursor-pointer border-b border-border transition-colors hover:bg-accent/60",
                         i % 2 === 0 ? "bg-card" : "bg-background"
                       )}
                     >
-                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.planning || "—"}</td>
-                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmt(v.fecha_visita)}</td>
-                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.hora || "—"}</td>
-                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.equipo || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.estado || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.dominio || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.planner || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.owner || "—"}</td>
                       <td className="max-w-[200px] truncate px-3 py-2.5 text-xs text-muted-foreground">
                         {inmueble?.domicilio || "—"}
                       </td>
-                      <td className="px-3 py-2.5 text-xs font-medium text-foreground">
-                        {inmueble?.propietario || "—"}
-                      </td>
-                      <td className="px-3 py-2.5 text-xs text-muted-foreground">—</td>
-                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.medio || "—"}</td>
-                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.resultado || "—"}</td>
-                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.planner || "—"}</td>
-                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.owner || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmt(v.fecha_visita)}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.hora || "—"}</td>
                       <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.buyer || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs font-medium text-foreground">{v.nombre_apellido || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.telefono || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{v.dni || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                        {v.vende === null ? "—" : v.vende ? "Sí" : "No"}
+                      </td>
+                      <td className="max-w-[200px] truncate px-3 py-2.5 text-xs text-muted-foreground">
+                        {v.observaciones_visita || "—"}
+                      </td>
                     </tr>
                   );
                 })
@@ -318,7 +371,8 @@ export default function VisitasPage() {
         </div>
       </main>
 
-      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+      {/* Modal Agregar Visita */}
+      <Dialog open={addModalOpen} onOpenChange={setAddModalOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-base font-semibold">Agregar Visita</DialogTitle>
@@ -330,27 +384,36 @@ export default function VisitasPage() {
           <div className="grid grid-cols-2 gap-x-4 gap-y-4 py-2">
             <div className="col-span-2 flex flex-col gap-1.5">
               <Label className="text-xs font-medium">Inmueble (Encargo) *</Label>
-              <Select value={form.opportunity_id} onValueChange={(v) => {
-                const inmueble = inmuebles.find((im) => String(im.id) === v);
-                setField("opportunity_id", v);
-                if (inmueble?.owner) setField("owner", inmueble.owner);
-              }}>
+              <Select value={form.opportunity_id} onValueChange={handleInmuebleSelect}>
                 <SelectTrigger className="h-8 text-sm">
                   <SelectValue placeholder="Seleccioná un inmueble..." />
                 </SelectTrigger>
                 <SelectContent>
                   {inmuebles.map((im) => (
-                    <SelectItem key={im.id} value={String(im.id)} className="text-sm">
-                      {im.label}
-                    </SelectItem>
+                    <SelectItem key={im.id} value={String(im.id)} className="text-sm">{im.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <Label className="text-xs font-medium">Planning</Label>
-              <Input value={form.planning} onChange={(e) => setField("planning", e.target.value)} className="h-8 text-sm" placeholder="Ej: Alcorcón" />
+              <Label className="text-xs font-medium">Estado</Label>
+              <Input value={form.estado} readOnly className="h-8 text-sm bg-muted/40" placeholder="Auto" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Dominio</Label>
+              <Input value={form.dominio} readOnly className="h-8 text-sm bg-muted/40" placeholder="Auto" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Planner</Label>
+              <Input value={form.planner} readOnly className="h-8 text-sm bg-muted/40" placeholder="Auto" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Owner</Label>
+              <Input value={form.owner} readOnly className="h-8 text-sm bg-muted/40" placeholder="Auto" />
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -364,65 +427,127 @@ export default function VisitasPage() {
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <Label className="text-xs font-medium">Medio</Label>
-              <Select value={form.medio} onValueChange={(v) => setField("medio", v)}>
+              <Label className="text-xs font-medium">Nombre y Apellido (Comprador)</Label>
+              <Input value={form.nombre_apellido} onChange={(e) => setField("nombre_apellido", e.target.value)} className="h-8 text-sm" placeholder="Nombre del comprador" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Teléfono</Label>
+              <Input value={form.telefono} onChange={(e) => setField("telefono", e.target.value)} className="h-8 text-sm" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Buyer (Visitador)</Label>
+              <Input value={form.buyer} readOnly className="h-8 text-sm bg-muted/40" placeholder="Auto" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">DNI (Comprador)</Label>
+              <Input value={form.dni} onChange={(e) => setField("dni", e.target.value)} className="h-8 text-sm" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">¿Vende?</Label>
+              <Select value={form.vende} onValueChange={(v) => setField("vende", v)}>
                 <SelectTrigger className="h-8 text-sm">
-                  <SelectValue />
+                  <SelectValue placeholder="Seleccioná..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {MEDIO_OPTIONS.map((o) => (
-                    <SelectItem key={o} value={o} className="text-sm">{o}</SelectItem>
-                  ))}
+                  <SelectItem value="si" className="text-sm">Sí</SelectItem>
+                  <SelectItem value="no" className="text-sm">No</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <Label className="text-xs font-medium">Resultado</Label>
-              <Select value={form.resultado} onValueChange={(v) => setField("resultado", v)}>
-                <SelectTrigger className="h-8 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {RESULTADO_OPTIONS.map((o) => (
-                    <SelectItem key={o} value={o} className="text-sm">{o}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <Label className="text-xs font-medium">Equipo</Label>
-              <Input value={form.equipo} onChange={(e) => setField("equipo", e.target.value)} className="h-8 text-sm" placeholder="Ej: Abdel, Gonza" />
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <Label className="text-xs font-medium">Planner</Label>
-              <Input value={form.planner} onChange={(e) => setField("planner", e.target.value)} className="h-8 text-sm" />
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <Label className="text-xs font-medium">Owner</Label>
-              <Input value={form.owner} onChange={(e) => setField("owner", e.target.value)} className="h-8 text-sm" />
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <Label className="text-xs font-medium">Buyer</Label>
-              <Input value={form.buyer} onChange={(e) => setField("buyer", e.target.value)} className="h-8 text-sm" placeholder="Nombre del comprador" />
             </div>
 
             <div className="col-span-2 flex flex-col gap-1.5">
-              <Label className="text-xs font-medium">Notas</Label>
-              <Textarea value={form.notas} onChange={(e) => setField("notas", e.target.value)} className="text-sm min-h-[72px] resize-none" placeholder="Observaciones de la visita..." />
+              <Label className="text-xs font-medium">Observaciones</Label>
+              <Textarea value={form.observaciones_visita} onChange={(e) => setField("observaciones_visita", e.target.value)} className="text-sm min-h-[72px] resize-none" placeholder="Observaciones de la visita..." />
             </div>
           </div>
 
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setModalOpen(false)} disabled={saving}>
-              Cancelar
-            </Button>
+            <Button variant="outline" size="sm" onClick={() => setAddModalOpen(false)} disabled={saving}>Cancelar</Button>
             <Button size="sm" onClick={() => void handleSaveVisita()} disabled={saving || !form.opportunity_id}>
               {saving ? "Guardando..." : "Guardar visita"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal Editar Visita */}
+      <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold">Editar visita</DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              {inmuebles.find((im) => im.id === selectedVisita?.opportunity_id)?.label || "Visita"}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-2 gap-x-4 gap-y-4 py-2">
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Estado</Label>
+              <Input value={editForm.estado} readOnly className="h-8 text-sm bg-muted/40" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Dominio</Label>
+              <Input value={editForm.dominio} readOnly className="h-8 text-sm bg-muted/40" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Fecha visita</Label>
+              <Input type="date" value={editForm.fecha_visita} onChange={(e) => setEditField("fecha_visita", e.target.value)} className="h-8 text-sm" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Hora</Label>
+              <Input type="time" value={editForm.hora} onChange={(e) => setEditField("hora", e.target.value)} className="h-8 text-sm" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Nombre y Apellido (Comprador)</Label>
+              <Input value={editForm.nombre_apellido} onChange={(e) => setEditField("nombre_apellido", e.target.value)} className="h-8 text-sm" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Teléfono</Label>
+              <Input value={editForm.telefono} onChange={(e) => setEditField("telefono", e.target.value)} className="h-8 text-sm" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Buyer (Visitador)</Label>
+              <Input value={editForm.buyer} readOnly className="h-8 text-sm bg-muted/40" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">DNI (Comprador)</Label>
+              <Input value={editForm.dni} onChange={(e) => setEditField("dni", e.target.value)} className="h-8 text-sm" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">¿Vende?</Label>
+              <Select value={editForm.vende} onValueChange={(v) => setEditField("vende", v)}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue placeholder="Seleccioná..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="si" className="text-sm">Sí</SelectItem>
+                  <SelectItem value="no" className="text-sm">No</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="col-span-2 flex flex-col gap-1.5">
+              <Label className="text-xs font-medium">Observaciones</Label>
+              <Textarea value={editForm.observaciones_visita} onChange={(e) => setEditField("observaciones_visita", e.target.value)} className="text-sm min-h-[72px] resize-none" />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setEditModalOpen(false)} disabled={saving}>Cancelar</Button>
+            <Button size="sm" onClick={() => void handleUpdateVisita()} disabled={saving}>
+              {saving ? "Guardando..." : "Guardar cambios"}
             </Button>
           </DialogFooter>
         </DialogContent>
