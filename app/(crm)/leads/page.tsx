@@ -584,6 +584,7 @@ export default function LeadsPage() {
         dominio_desc: next.planner || null,
         memo: next.notes || null,
         fase_id: PHASE_ID_MAP[next.phase] ?? 1,
+        postal_id: next.cp && !isNaN(Number(next.cp)) ? Number(next.cp) : null,
       })
       .eq("id", Number(next.id));
 
