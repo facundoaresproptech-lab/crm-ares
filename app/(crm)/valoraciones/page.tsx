@@ -8,6 +8,13 @@ import { cn } from "@/lib/utils";
 import { PHASE_LABELS, type Lead } from "@/lib/crm-data";
 import { parseOpportunityContactMemo } from "@/lib/opportunity-contact-memo";
 import { canViewAllLeads, useUser } from "@/lib/hooks/useUser";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type CrmLeadRow = {
   id: number;
@@ -51,10 +58,17 @@ type ValoracionEntry = {
   id: string;
   leadId: string;
   fecha: string;
+  registeredAt: string;
   hora: string;
   medio: string;
+  createdBy: string;
+  notes: string;
   ownerName: string;
   address: string;
+  district: string;
+  province: string;
+  postalCode: string;
+  valuationValue: string;
   phone: string;
   source: string;
   dominio: string;
@@ -64,10 +78,13 @@ type ValoracionEntry = {
 };
 
 function parseValuationMemo(memo: string | null | undefined) {
-  const { fields } = parseOpportunityContactMemo(memo, "[VALORACION]");
+  const { author, fields, memo: notes } = parseOpportunityContactMemo(
+    memo,
+    "[VALORACION]"
+  );
   const medio = fields.medio && fields.medio !== "—" ? fields.medio : "";
 
-  return { medio, hora: fields.hora || "" };
+  return { medio, hora: fields.hora || "", createdBy: author, notes };
 }
 
 const STATUS_CONFIG: Record<string, { label: string; dot: string }> = {
@@ -271,6 +288,14 @@ function fmt(d: string) {
   });
 }
 
+function fullDateForSearch(d: string) {
+  const normalized = normalizeDate(d);
+  if (!normalized) return "";
+
+  const [year, month, day] = normalized.split("-");
+  return `${day}/${month}/${year}`;
+}
+
 
 function normalizeDate(raw: string | null | undefined): string {
   if (!raw) return "";
@@ -288,6 +313,17 @@ function localDateValue(date: Date) {
   const day = String(date.getDate()).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
+}
+
+function isFromLastThreeDaysOnward(dateValue: string) {
+  const normalized = normalizeDate(dateValue);
+  if (!normalized) return false;
+
+  const today = new Date();
+  const cutoff = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  cutoff.setDate(cutoff.getDate() - 2);
+
+  return normalized >= localDateValue(cutoff);
 }
 
 function getPlanningStatus(dateValue: string): "previas" | "hoy" | "proximas" {
@@ -337,6 +373,36 @@ function normalizeValor(raw: string | null | undefined) {
   return raw;
 }
 
+function formatEuroValue(raw: string) {
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return "—";
+
+  return `${new Intl.NumberFormat("es-ES", {
+    maximumFractionDigits: 0,
+  }).format(Number(digits))} €`;
+}
+
+function DetailField({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("min-w-0 rounded-lg border border-border bg-muted/20 p-3", className)}>
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <div className="mt-1 break-words text-sm font-medium text-foreground">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function mapCrmLeadToLead(row: CrmLeadRow): ValoracionLead {
   const ownerLabel = row.comercial_name?.trim() || "Sin comercial";
   const plannerLabel = row.contact_name?.trim() || "—";
@@ -384,6 +450,7 @@ export default function ValoracionesPage() {
   const [items, setItems] = useState<ValoracionEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedItem, setSelectedItem] = useState<ValoracionEntry | null>(null);
 
   useEffect(() => {
     if (userLoading) return;
@@ -436,16 +503,23 @@ export default function ValoracionesPage() {
 
       const entries: ValoracionEntry[] = contactRows.map((row) => {
         const lead = leadsMap.get(row.opportunity_id);
-        const { medio, hora } = parseValuationMemo(row.memo);
+        const { medio, hora, createdBy, notes } = parseValuationMemo(row.memo);
 
         return {
           id: String(row.id),
           leadId: String(row.opportunity_id),
           fecha: normalizeDate(row.fecha || row.created_at || ""),
+          registeredAt: row.created_at || "",
           hora,
           medio,
+          createdBy,
+          notes,
           ownerName: lead?.ownerName || "—",
           address: lead?.address || "—",
+          district: lead?.distrito || "—",
+          province: lead?.provincia || "—",
+          postalCode: lead?.cp || "—",
+          valuationValue: lead?.valor || "—",
           phone: lead?.phone || "—",
           source: lead?.source || "Sin origen",
           dominio: lead?.dominio || "—",
@@ -475,10 +549,17 @@ export default function ValoracionesPage() {
           id: `legacy-${lead.id}`,
           leadId: lead.id,
           fecha: lead.fechaValoracion,
+          registeredAt: lead.createdAt,
           hora: lead.hora || "",
           medio: lead.medio && lead.medio !== "—" ? lead.medio : "",
+          createdBy: "",
+          notes: "",
           ownerName: lead.ownerName,
           address: lead.address,
+          district: lead.distrito,
+          province: lead.provincia,
+          postalCode: lead.cp,
+          valuationValue: lead.valor,
           phone: lead.phone,
           source: lead.source,
           dominio: lead.dominio || "—",
@@ -497,10 +578,15 @@ export default function ValoracionesPage() {
 
   const filteredItems = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-    if (!q) return items;
+    if (!q) {
+      return items.filter((item) => isFromLastThreeDaysOnward(item.fecha));
+    }
 
     return items.filter((item) =>
       [
+        item.fecha,
+        fmt(item.fecha),
+        fullDateForSearch(item.fecha),
         item.ownerName,
         item.address,
         item.phone,
@@ -509,6 +595,8 @@ export default function ValoracionesPage() {
         item.owner,
         item.planner,
         item.dominio,
+        item.createdBy,
+        item.notes,
         PHASE_LABELS[item.phase],
       ]
         .join(" ")
@@ -593,8 +681,17 @@ export default function ValoracionesPage() {
               {filteredItems.map((item, i) => (
                 <tr
                   key={item.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Ver detalle de la valoración de ${item.ownerName}`}
+                  onClick={() => setSelectedItem(item)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    setSelectedItem(item);
+                  }}
                   className={cn(
-                    "border-b border-border transition-colors hover:bg-accent/40",
+                    "cursor-pointer border-b border-border transition-colors hover:bg-accent/60 focus-visible:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                     i % 2 === 0 ? "bg-card" : "bg-background"
                   )}
                 >
@@ -683,6 +780,107 @@ export default function ValoracionesPage() {
           </table>
         </div>
       </main>
+
+      <Dialog
+        open={selectedItem !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedItem(null);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto [&_[data-slot=dialog-close]]:flex [&_[data-slot=dialog-close]]:size-8 [&_[data-slot=dialog-close]]:items-center [&_[data-slot=dialog-close]]:justify-center [&_[data-slot=dialog-close]]:rounded-full [&_[data-slot=dialog-close]]:bg-primary [&_[data-slot=dialog-close]]:text-primary-foreground [&_[data-slot=dialog-close]]:opacity-100 [&_[data-slot=dialog-close]]:shadow-sm [&_[data-slot=dialog-close]]:hover:bg-primary/85 [&_[data-slot=dialog-close]]:hover:text-primary-foreground [&_[data-slot=dialog-close]]:data-[state=open]:bg-primary sm:max-w-2xl">
+          {selectedItem && (
+            <>
+              <DialogHeader className="pr-8">
+                <DialogTitle className="text-base font-semibold">
+                  Detalle de valoración
+                </DialogTitle>
+                <DialogDescription className="text-xs">
+                  {selectedItem.address} · {selectedItem.ownerName}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-5">
+                <section>
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Valoración
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <DetailField label="Fecha">{fmt(selectedItem.fecha)}</DetailField>
+                    <DetailField label="Hora">{selectedItem.hora || "—"}</DetailField>
+                    <DetailField label="Medio">
+                      {selectedItem.medio ? (
+                        <span
+                          className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium"
+                          style={getMedioBadgeStyle(selectedItem.medio)}
+                        >
+                          {selectedItem.medio}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </DetailField>
+                  </div>
+                </section>
+
+                <section>
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Inmueble
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <DetailField label="Dirección" className="col-span-2 sm:col-span-3">
+                      {selectedItem.address}
+                    </DetailField>
+                    <DetailField label="Distrito">{selectedItem.district}</DetailField>
+                    <DetailField label="Provincia">{selectedItem.province}</DetailField>
+                    <DetailField label="Código postal">{selectedItem.postalCode}</DetailField>
+                    <DetailField label="Valor de tasación">
+                      {formatEuroValue(selectedItem.valuationValue)}
+                    </DetailField>
+                    <DetailField label="Dominio">{selectedItem.dominio}</DetailField>
+                    <DetailField label="Origen">{selectedItem.source}</DetailField>
+                    <DetailField label="Fase">
+                      <span
+                        className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold"
+                        style={getPhaseBadgeStyle(selectedItem.phase)}
+                      >
+                        <Circle className="h-1.5 w-1.5 fill-current" />
+                        {PHASE_LABELS[selectedItem.phase] ?? selectedItem.phase}
+                      </span>
+                    </DetailField>
+                  </div>
+                </section>
+
+                <section>
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Contacto y responsables
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <DetailField label="Propietario">{selectedItem.ownerName}</DetailField>
+                    <DetailField label="Teléfono">{selectedItem.phone}</DetailField>
+                    <DetailField label="Planner">{selectedItem.planner || "—"}</DetailField>
+                    <DetailField label="Owner">{selectedItem.owner}</DetailField>
+                    <DetailField label="Creada por">{selectedItem.createdBy || "—"}</DetailField>
+                    <DetailField label="Fecha de registro">
+                      {fmt(selectedItem.registeredAt)}
+                    </DetailField>
+                  </div>
+                </section>
+
+                {selectedItem.notes && (
+                  <section>
+                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Observaciones
+                    </h3>
+                    <div className="whitespace-pre-wrap rounded-lg border border-border bg-muted/20 p-3 text-sm text-foreground">
+                      {selectedItem.notes}
+                    </div>
+                  </section>
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

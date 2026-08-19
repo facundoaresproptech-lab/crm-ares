@@ -33,6 +33,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { LeadDocumentationTab } from "@/components/crm/lead-documentation-tab";
 import {
   Select,
   SelectContent,
@@ -375,7 +376,13 @@ type VisitRow = {
   created_at?: string | null;
 };
 
-type LeadDetailTab = "resumen" | "valoracion" | "encargo" | "rg" | "visitas";
+type LeadDetailTab =
+  | "resumen"
+  | "valoracion"
+  | "encargo"
+  | "rg"
+  | "visitas"
+  | "documentacion";
 
 type EditLeadTab = "resumen" | "inmueble" | "asignacion";
 
@@ -385,6 +392,7 @@ const LEAD_DETAIL_TABS: Array<{ value: LeadDetailTab; label: string }> = [
   { value: "encargo", label: "Encargo" },
   { value: "rg", label: "R.G." },
   { value: "visitas", label: "Visitas" },
+  { value: "documentacion", label: "Documentación" },
 ];
 
 const EDIT_LEAD_TABS: Array<{ value: EditLeadTab; label: string }> = [
@@ -2205,13 +2213,19 @@ export function LeadDetailPanel({
                   Llamar
                 </a>
 
-                <a
-                  href={`tel:${effectiveLead.phone.replace(/[^+\d]/g, "")}`}
-                  onClick={() => void handleCallLead()}
-                  className="mt-1 hidden text-xs font-medium text-muted-foreground transition hover:text-foreground md:block"
-                >
-                  {effectiveLead.phone}
-                </a>
+                <div className="mt-2 hidden items-center gap-3 md:flex">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    {effectiveLead.phone}
+                  </span>
+                  <a
+                    href={`tel:${effectiveLead.phone.replace(/[^+\d]/g, "")}`}
+                    onClick={() => void handleCallLead()}
+                    className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90"
+                  >
+                    <Phone className="h-3.5 w-3.5" />
+                    Llamar
+                  </a>
+                </div>
               </>
             )
           )}
@@ -2281,7 +2295,7 @@ export function LeadDetailPanel({
           )}
 
           <div className="space-y-4">
-            <nav className="flex w-full touch-pan-x gap-1 overflow-x-auto rounded-xl border border-border bg-muted/20 p-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:grid md:grid-cols-5 md:overflow-visible">
+            <nav className="flex w-full touch-pan-x gap-1 overflow-x-auto rounded-xl border border-border bg-muted/20 p-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:grid md:grid-cols-6 md:overflow-visible">
               {LEAD_DETAIL_TABS.map((tab) => {
                 const isActive = activeTab === tab.value;
                 const count =
@@ -3171,6 +3185,14 @@ export function LeadDetailPanel({
                     </div>
                   )}
                 </div>
+              )}
+
+              {activeTab === "documentacion" && (
+                <LeadDocumentationTab
+                  leadId={effectiveLead.id}
+                  currentUserName={currentUserName}
+                  readOnly={readOnly}
+                />
               )}
 
             </div>
