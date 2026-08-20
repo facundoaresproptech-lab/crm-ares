@@ -21,6 +21,16 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -47,9 +57,6 @@ type RequirementStatus = "complete" | "missing" | "pending" | "not_applicable" |
 type OwnerDocumentation = {
   civilStatus: string;
   maritalRegime: string;
-  nationality: string;
-  taxResidence: string;
-  address: string;
 };
 
 type DocumentationState = {
@@ -90,6 +97,7 @@ type Requirement = {
   condition?: ConditionalAnswer;
   value?: string;
   options?: string[];
+  multiple?: boolean;
   onValueChange?: (value: string) => void;
   onValueBlur?: () => void;
 };
@@ -112,9 +120,6 @@ const ALLOWED_FILE_TYPES = new Set([
 const EMPTY_OWNER: OwnerDocumentation = {
   civilStatus: "",
   maritalRegime: "",
-  nationality: "",
-  taxResidence: "",
-  address: "",
 };
 
 const DEFAULT_STATE: DocumentationState = {
@@ -252,6 +257,8 @@ export function LeadDocumentationTab({
   const [saving, setSaving] = useState(false);
   const [uploadingKey, setUploadingKey] = useState<string | null>(null);
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
+  const [filePendingDelete, setFilePendingDelete] =
+    useState<DocumentationFile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [schemaMissing, setSchemaMissing] = useState(false);
   const [configurationOpen, setConfigurationOpen] = useState(false);
@@ -347,6 +354,19 @@ export function LeadDocumentationTab({
     if (persist) void persistState(nextState);
   }
 
+  function updateOwnerCivilStatus(index: number, value: string) {
+    const owners = latestState.current.owners.map((owner, ownerIndex) =>
+      ownerIndex === index
+        ? {
+            ...owner,
+            civilStatus: value,
+            maritalRegime: value === "Casado/a" ? owner.maritalRegime : "",
+          }
+        : owner
+    );
+    void persistState({ ...latestState.current, owners });
+  }
+
   function updateRootField(
     key: "mortgageCancellationMethod" | "keySets" | "garageRemotes",
     value: string,
@@ -425,6 +445,13 @@ export function LeadDocumentationTab({
     setUploadingKey(null);
   }
 
+  async function handleUploadFiles(requirementKey: string, selectedFiles?: FileList | null) {
+    if (!selectedFiles?.length) return;
+    for (const file of Array.from(selectedFiles)) {
+      await handleUpload(requirementKey, file);
+    }
+  }
+
   async function handleDownload(file: DocumentationFile) {
     setError(null);
     if (file.is_local && file.preview_url) {
@@ -473,10 +500,8 @@ export function LeadDocumentationTab({
   const sections = useMemo<Section[]>(() => {
     const ownerSections = state.owners.map((owner, index) => {
       const ownerNumber = index + 1;
-      const marriedCondition: ConditionalAnswer = owner.civilStatus
-        ? owner.civilStatus === "Casado/a"
-          ? "yes"
-          : "no"
+      const marriedCondition: ConditionalAnswer = owner.civilStatus === "Casado/a"
+        ? "yes"
         : "pending";
 
       return {
@@ -496,45 +521,24 @@ export function LeadDocumentationTab({
             required: true,
             value: owner.civilStatus,
             options: ["Soltero/a", "Casado/a", "Divorciado/a", "Viudo/a", "Pareja de hecho"],
-            onValueChange: (value: string) => updateOwner(index, "civilStatus", value, true),
+            onValueChange: (value: string) => updateOwnerCivilStatus(index, value),
           },
-          {
-            key: `owner-${ownerNumber}-marital-regime`,
-            label: "Régimen económico matrimonial",
-            kind: "select" as const,
-            required: true,
-            condition: marriedCondition,
-            value: owner.maritalRegime,
-            options: ["Gananciales", "Separación de bienes", "Participación", "Otro"],
-            onValueChange: (value: string) => updateOwner(index, "maritalRegime", value, true),
-          },
-          {
-            key: `owner-${ownerNumber}-nationality`,
-            label: "Nacionalidad",
-            kind: "text" as const,
-            required: true,
-            value: owner.nationality,
-            onValueChange: (value: string) => updateOwner(index, "nationality", value),
-            onValueBlur: () => void persistState(latestState.current),
-          },
-          {
-            key: `owner-${ownerNumber}-tax-residence`,
-            label: "Residencia fiscal",
-            kind: "text" as const,
-            required: true,
-            value: owner.taxResidence,
-            onValueChange: (value: string) => updateOwner(index, "taxResidence", value),
-            onValueBlur: () => void persistState(latestState.current),
-          },
-          {
-            key: `owner-${ownerNumber}-address`,
-            label: "Domicilio",
-            kind: "text" as const,
-            required: true,
-            value: owner.address,
-            onValueChange: (value: string) => updateOwner(index, "address", value),
-            onValueBlur: () => void persistState(latestState.current),
-          },
+          ...(owner.civilStatus && owner.civilStatus !== "Casado/a"
+            ? []
+            : [
+                {
+                  key: `owner-${ownerNumber}-marital-regime`,
+                  label: "Régimen económico matrimonial",
+                  description: "Se solicita únicamente cuando el propietario está casado.",
+                  kind: "select" as const,
+                  required: true,
+                  condition: marriedCondition,
+                  value: owner.maritalRegime,
+                  options: ["Gananciales", "Separación de bienes", "Participación", "Otro"],
+                  onValueChange: (value: string) =>
+                    updateOwner(index, "maritalRegime", value, true),
+                },
+              ]),
           {
             key: `owner-${ownerNumber}-bank-certificate`,
             label: "Certificado de titularidad bancaria",
@@ -559,6 +563,7 @@ export function LeadDocumentationTab({
       {
         key: "property-community-certificate",
         label: "Certificado de deuda cero de la comunidad",
+        description: "Se habilita para adjuntar cuando el inmueble pertenece a una comunidad.",
         kind: "file",
         required: true,
         condition: state.conditions.community,
@@ -566,9 +571,11 @@ export function LeadDocumentationTab({
       {
         key: "property-supplies",
         label: "Últimos recibos de suministros",
+        description: "Puedes seleccionar y adjuntar varios recibos.",
         kind: "file",
         required: true,
         condition: state.conditions.activeSupplies,
+        multiple: true,
       },
     ];
 
@@ -582,6 +589,7 @@ export function LeadDocumentationTab({
           {
             key: "earnest-money-contract",
             label: "Contrato de arras",
+            description: "Adjunta el contrato firmado.",
             kind: "file",
             required: true,
             condition: state.conditions.earnestMoney,
@@ -596,37 +604,48 @@ export function LeadDocumentationTab({
           },
         ],
       },
-      {
-        key: "mortgage",
-        title: "Hipoteca",
-        requirements: [
-          {
-            key: "mortgage-debt-certificate",
-            label: "Certificado de deuda pendiente o saldo cero",
-            description: "Solicitarlo aproximadamente una semana antes de la firma.",
-            kind: "file",
-            required: true,
-            condition: state.conditions.mortgage,
-          },
-          {
-            key: "mortgage-cancellation-method",
-            label: "Forma prevista de cancelación",
-            kind: "select",
-            required: true,
-            condition: state.conditions.mortgage,
-            value: state.mortgageCancellationMethod,
-            options: ["Económica y registral", "Económica en firma", "Cancelación previa", "Otra"],
-            onValueChange: (value) => updateRootField("mortgageCancellationMethod", value, true),
-          },
-          {
-            key: "mortgage-provision",
-            label: "Provisión de fondos para cancelación registral",
-            kind: "file",
-            required: true,
-            condition: state.conditions.mortgage,
-          },
-        ],
-      },
+      ...(state.conditions.mortgage === "no"
+        ? []
+        : [
+            {
+              key: "mortgage",
+              title: "Hipoteca",
+              requirements: [
+                {
+                  key: "mortgage-debt-certificate",
+                  label: "Certificado de deuda pendiente o saldo cero",
+                  description: "Solicitarlo aproximadamente una semana antes de la firma.",
+                  kind: "file" as const,
+                  required: true,
+                  condition: state.conditions.mortgage,
+                },
+                {
+                  key: "mortgage-cancellation-method",
+                  label: "Forma prevista de cancelación",
+                  kind: "select" as const,
+                  required: true,
+                  condition: state.conditions.mortgage,
+                  value: state.mortgageCancellationMethod,
+                  options: [
+                    "Cancelación previa a la firma",
+                    "Cancelación económica en la firma",
+                    "Cancelación económica y registral",
+                    "Otra",
+                  ],
+                  onValueChange: (value: string) =>
+                    updateRootField("mortgageCancellationMethod", value, true),
+                },
+                {
+                  key: "mortgage-provision",
+                  label: "Provisión de fondos para cancelación registral",
+                  description: "Adjunta el justificante de la provisión de fondos.",
+                  kind: "file" as const,
+                  required: true,
+                  condition: state.conditions.mortgage,
+                },
+              ],
+            },
+          ]),
       {
         key: "others",
         title: "Otros",
@@ -640,23 +659,32 @@ export function LeadDocumentationTab({
             onValueChange: (value) => updateRootField("keySets", value),
             onValueBlur: () => void persistState(latestState.current),
           },
-          {
-            key: "other-garage-remotes",
-            label: "Número de mandos de garaje",
-            kind: "number",
-            required: true,
-            condition: state.conditions.garage,
-            value: state.garageRemotes,
-            onValueChange: (value) => updateRootField("garageRemotes", value),
-            onValueBlur: () => void persistState(latestState.current),
-          },
-          {
-            key: "other-lease-contract",
-            label: "Contrato de arrendamiento",
-            kind: "file",
-            required: true,
-            condition: state.conditions.rented,
-          },
+          ...(state.conditions.garage === "no"
+            ? []
+            : [
+                {
+                  key: "other-garage-remotes",
+                  label: "Número de mandos de garaje",
+                  kind: "number" as const,
+                  required: true,
+                  condition: state.conditions.garage,
+                  value: state.garageRemotes,
+                  onValueChange: (value: string) => updateRootField("garageRemotes", value),
+                  onValueBlur: () => void persistState(latestState.current),
+                },
+              ]),
+          ...(state.conditions.rented === "no"
+            ? []
+            : [
+                {
+                  key: "other-lease-contract",
+                  label: "Contrato de arrendamiento",
+                  description: "Adjunta el contrato vigente.",
+                  kind: "file" as const,
+                  required: true,
+                  condition: state.conditions.rented,
+                },
+              ]),
         ],
       },
     ];
@@ -679,6 +707,11 @@ export function LeadDocumentationTab({
   const pendingQuestionCount = CONDITION_QUESTIONS.filter(
     (question) => state.conditions[question.key] === "pending"
   ).length;
+  const answeredQuestionCount = CONDITION_QUESTIONS.length - pendingQuestionCount;
+  const configurationComplete = pendingQuestionCount === 0;
+  const configurationPercentage = Math.round(
+    (answeredQuestionCount / CONDITION_QUESTIONS.length) * 100
+  );
 
   const configurationSummary = useMemo(() => {
     const labels: Record<keyof DocumentationState["conditions"], string> = {
@@ -762,6 +795,12 @@ export function LeadDocumentationTab({
           <StatusIcon status={status} />
         </div>
 
+        {status === "pending" && requirement.kind === "file" && (
+          <p className="mt-2 text-xs text-amber-700">
+            Responde “Sí” en Configurar documentación para habilitar el archivo.
+          </p>
+        )}
+
         {!inactive && requirement.kind === "file" && (
           <div className="mt-3 space-y-2">
             {requirementFiles.map((file) => (
@@ -784,7 +823,7 @@ export function LeadDocumentationTab({
                     size="icon"
                     className="h-7 w-7 text-destructive hover:text-destructive"
                     disabled={deletingFileId === file.id}
-                    onClick={() => void handleDelete(file)}
+                    onClick={() => setFilePendingDelete(file)}
                   >
                     {deletingFileId === file.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                     <span className="sr-only">Eliminar archivo</span>
@@ -795,13 +834,22 @@ export function LeadDocumentationTab({
             {!locked && (
               <label className={cn("inline-flex cursor-pointer items-center gap-2 rounded-md border border-dashed border-primary/40 px-3 py-2 text-xs font-medium text-primary transition hover:bg-primary/5", uploadingKey === requirement.key && "pointer-events-none opacity-60")}>
                 {uploadingKey === requirement.key ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                {uploadingKey === requirement.key ? "Subiendo..." : requirementFiles.length ? "Adjuntar otro" : "Adjuntar archivo"}
+                {uploadingKey === requirement.key
+                  ? "Subiendo..."
+                  : requirementFiles.length
+                    ? requirement.multiple
+                      ? "Adjuntar más archivos"
+                      : "Adjuntar otro"
+                    : requirement.multiple
+                      ? "Adjuntar archivos"
+                      : "Adjuntar archivo"}
                 <input
                   type="file"
                   className="sr-only"
                   accept=".pdf,.jpg,.jpeg,.png,.webp"
+                  multiple={requirement.multiple}
                   onChange={(event) => {
-                    void handleUpload(requirement.key, event.target.files?.[0]);
+                    void handleUploadFiles(requirement.key, event.target.files);
                     event.currentTarget.value = "";
                   }}
                 />
@@ -843,69 +891,97 @@ export function LeadDocumentationTab({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+      <div
+        data-testid="documentation-status-card"
+        className={cn(
+          "rounded-xl border p-4",
+          configurationComplete
+            ? "border-primary/20 bg-primary/5"
+            : "border-amber-200 bg-amber-50/60"
+        )}
+      >
         <div className="flex items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-2">
             <h3 className="truncate text-sm font-semibold">Estado de la documentación</h3>
             {saving && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />}
           </div>
-          <span className="shrink-0 text-lg font-semibold text-primary">
-            {progressPercentage}%
+          <span
+            className={cn(
+              "shrink-0 text-lg font-semibold",
+              configurationComplete ? "text-primary" : "text-amber-700"
+            )}
+          >
+            {configurationComplete
+              ? `${progressPercentage}%`
+              : `${answeredQuestionCount}/${CONDITION_QUESTIONS.length}`}
           </span>
         </div>
 
-        <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-primary/10">
+        <p className="mt-1 text-xs text-muted-foreground">
+          {configurationComplete
+            ? `${summary.complete} de ${applicableTotal} requisitos completos`
+            : `${pendingQuestionCount} ${pendingQuestionCount === 1 ? "pregunta pendiente" : "preguntas pendientes"} para definir qué documentación corresponde`}
+        </p>
+
+        <div
+          className={cn(
+            "mt-3 h-2.5 overflow-hidden rounded-full",
+            configurationComplete ? "bg-primary/10" : "bg-amber-200/70"
+          )}
+        >
           <div
-            className="h-full rounded-full bg-primary transition-all duration-300"
-            style={{ width: `${progressPercentage}%` }}
+            className={cn(
+              "h-full rounded-full transition-all duration-300",
+              configurationComplete ? "bg-primary" : "bg-amber-500"
+            )}
+            style={{
+              width: `${configurationComplete ? progressPercentage : configurationPercentage}%`,
+            }}
           />
         </div>
 
-        <div className="mt-2 flex flex-col gap-2 text-xs sm:flex-row sm:items-center sm:justify-between">
-          <span className="font-medium text-foreground">
-            {summary.complete} de {applicableTotal} requisitos completos
-          </span>
-          <div className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
-            {summary.missing > 0 && (
-              <span className="text-red-600">● {summary.missing} faltantes</span>
-            )}
-            {pendingQuestionCount > 0 && (
-              <span className="text-amber-600">● {pendingQuestionCount} preguntas pendientes</span>
-            )}
-            {summary.notApplicable > 0 && (
-              <span className="text-slate-500">● {summary.notApplicable} no aplican</span>
+        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Configuración documental
+            </p>
+            <p className="mt-1 break-words text-sm leading-5 text-foreground">
+              {configurationSummary}
+            </p>
+            {configurationComplete && (
+              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                {summary.missing > 0 && (
+                  <span className="text-red-600">● {summary.missing} faltantes</span>
+                )}
+                {summary.pending > 0 && (
+                  <span className="text-amber-600">● {summary.pending} datos por confirmar</span>
+                )}
+                {summary.notApplicable > 0 && (
+                  <span className="text-slate-500">● {summary.notApplicable} no aplican</span>
+                )}
+              </div>
             )}
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0 bg-background"
+            onClick={openConfiguration}
+          >
+            <Settings2 className="h-4 w-4" />
+            {readOnly ? "Ver configuración" : "Configurar documentación"}
+          </Button>
         </div>
       </div>
 
       {error && (
         <div className={cn("rounded-lg border px-3 py-2 text-xs", schemaMissing ? "border-amber-200 bg-amber-50 text-amber-800" : "border-destructive/30 bg-destructive/10 text-destructive")}>
-          {error}
-          {schemaMissing && " Estás en modo de prueba: puedes configurar y adjuntar archivos, pero se perderán al refrescar la página."}
+          {schemaMissing
+            ? "Modo de prueba: puedes configurar y adjuntar archivos, pero se perderán al refrescar la página."
+            : error}
         </div>
       )}
-
-      <div className="flex flex-col gap-3 rounded-xl border bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Configuración documental
-          </p>
-          <p className="mt-1 truncate text-sm text-foreground" title={configurationSummary}>
-            {configurationSummary}
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="shrink-0"
-          onClick={openConfiguration}
-        >
-          <Settings2 className="h-4 w-4" />
-          {readOnly ? "Ver configuración" : "Configurar documentación"}
-        </Button>
-      </div>
 
       <Accordion type="multiple" defaultValue={["owner-1"]} className="space-y-3">
 
@@ -1051,6 +1127,48 @@ export function LeadDocumentationTab({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={Boolean(filePendingDelete)}
+        onOpenChange={(open) => {
+          if (!open && !deletingFileId) setFilePendingDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar este documento?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará “{filePendingDelete?.file_name}”. Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(deletingFileId)}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={Boolean(deletingFileId)}
+              onClick={(event) => {
+                event.preventDefault();
+                if (!filePendingDelete) return;
+                void (async () => {
+                  await handleDelete(filePendingDelete);
+                  setFilePendingDelete(null);
+                })();
+              }}
+            >
+              {deletingFileId ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Eliminando...
+                </>
+              ) : (
+                "Eliminar documento"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <p className="text-[11px] text-muted-foreground">Formatos admitidos: PDF, JPG, PNG y WEBP · Máximo 15 MB por archivo.</p>
     </div>
